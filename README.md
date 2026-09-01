@@ -32,3 +32,21 @@ The API accepts OTLP JSON at `/v1/traces` and `/v1/otlp/v1/traces`. All protecte
 ## Scope boundaries
 
 V1 produces recommendations and YAML exports only. It does not change production routing, collect prompt/output content by default, implement a frontend, or integrate payments.
+
+## Open Deep Research benchmark
+
+The bounded benchmark adapter lives in `scripts/run_odr_benchmark.py`. It uses the fork at `/home/lenovo/Documents/open_deep_research` by default.
+
+Replay historical reports (no network or provider calls):
+
+```bash
+.venv/bin/python scripts/run_odr_benchmark.py --mode replay --tasks 20 --search-tasks 50
+```
+
+For an explicit Backboard live smoke, place `BACKBOARD_API_KEY`, optional `BACKBOARD_BASE_URL`, and optional `BACKBOARD_LLM_PROVIDER` in the Open Deep Research fork's `.env`, then run only a bounded task first:
+
+```bash
+.venv/bin/python scripts/run_odr_benchmark.py --mode backboard --tasks 1 --search-tasks 1 --model-pool backboard:gpt-luna-5.6
+```
+
+The replay metric is a historical-report overlap proxy, not Deep Research Bench RACE. A live run is only a real provider benchmark when the output records `mode: backboard` and completes with provider usage/latency evidence.
