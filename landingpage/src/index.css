@@ -278,3 +278,14 @@ body.studio-is-resizing * { user-select: none !important; cursor: ew-resize !imp
     max-width: none;
   }
 }
+
+/* Use the supplied horizontal wordmark as a crisp square mark in the narrow rail. */
+.studio-rail-logo {
+  display: block;
+  width: 1.25rem;
+  height: 1.25rem;
+  object-fit: cover;
+  object-position: left center;
+  user-select: none;
+  -webkit-user-drag: none;
+}
