@@ -9,7 +9,7 @@ import './vesper-routes.css';
 
 const routeFromHash = (): VesperRoute | 'home' | 'studio' => {
   const value = window.location.hash.replace(/^#/, '').replace(/\/$/, '');
-  if (value === 'studio') return 'studio';
+  if (value === 'studio' || value.startsWith('studio/')) return 'studio';
   if (value === 'benefits' || value === 'how-it-works' || value === 'benchmarks' || value === 'faqs' || value === 'pricing') return value;
   return 'home';
 };

@@ -122,4 +122,4 @@ export interface AgentProject {
   edges: GraphEdge[];
 }
 
-export type ViewMode = 'graph' | 'frontier' | 'timeline' | 'diff' | 'evals';
+export type ViewMode = 'graph' | 'frontier' | 'timeline' | 'diff' | 'evals' | 'settings';

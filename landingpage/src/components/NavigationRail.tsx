@@ -153,7 +153,7 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
         <button
           id="nav-settings-btn"
           onClick={onOpenSettings}
-          className="group relative p-2 rounded text-[#5C6268] hover:text-[#D7DADD] hover:bg-white/[0.03] transition-colors focus:outline-none"
+          className={`group relative p-2 rounded transition-colors focus:outline-none ${currentView === 'settings' ? 'bg-[#0F1113] text-[#F2F3F4] border border-white/[0.1]' : 'text-[#5C6268] hover:text-[#D7DADD] hover:bg-white/[0.03]'}`}
           title="PGO Compiler Settings"
         >
           <Settings className="w-4 h-4" />

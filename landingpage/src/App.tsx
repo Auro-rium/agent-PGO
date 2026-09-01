@@ -25,9 +25,16 @@ import { CommandPalette } from './components/CommandPalette';
 import { ExportModal } from './components/ExportModal';
 import { IntegrationsModal } from './components/IntegrationsModal';
 import { SettingsModal } from './components/SettingsModal';
+import { SettingsView } from './components/SettingsView';
+
+const studioViewFromHash = (): ViewMode => {
+  const value = window.location.hash.replace(/^#studio\/?/, "").replace(/\/$/, "");
+  if (value === 'frontier' || value === 'diff' || value === 'timeline' || value === 'evals' || value === 'settings') return value;
+  return 'graph';
+};
 
 export default function App() {
-  const [currentView, setCurrentView] = useState<ViewMode>('graph');
+  const [currentView, setCurrentView] = useState<ViewMode>(studioViewFromHash);
   const [project, setProject] = useState<AgentProject>(RESEARCH_PROJECT);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   
@@ -58,6 +65,17 @@ export default function App() {
   // Selected node object
   const selectedNode = project.nodes.find((n) => n.id === selectedNodeId) || null;
 
+  const handleViewChange = (view: ViewMode) => {
+    window.history.pushState({}, "", "#studio/" + view);
+    setCurrentView(view);
+  };
+
+  useEffect(() => {
+    const handleHashChange = () => setCurrentView(studioViewFromHash());
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
+
   // Global Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -69,19 +87,19 @@ export default function App() {
         runOptimizationSimulation();
       } else if ((e.metaKey || e.ctrlKey) && e.key === '1') {
         e.preventDefault();
-        setCurrentView('graph');
+        handleViewChange('graph');
       } else if ((e.metaKey || e.ctrlKey) && e.key === '2') {
         e.preventDefault();
-        setCurrentView('frontier');
+        handleViewChange('frontier');
       } else if ((e.metaKey || e.ctrlKey) && e.key === '3') {
         e.preventDefault();
-        setCurrentView('diff');
+        handleViewChange('diff');
       } else if ((e.metaKey || e.ctrlKey) && e.key === '4') {
         e.preventDefault();
-        setCurrentView('timeline');
+        handleViewChange('timeline');
       } else if ((e.metaKey || e.ctrlKey) && e.key === '5') {
         e.preventDefault();
-        setCurrentView('evals');
+        handleViewChange('evals');
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -360,9 +378,9 @@ export default function App() {
       {/* 1. Slim Left Navigation Rail */}
       <NavigationRail
         currentView={currentView}
-        onViewChange={setCurrentView}
+        onViewChange={handleViewChange}
         onOpenIntegrations={() => setIsIntegrationsModalOpen(true)}
-        onOpenSettings={() => setIsSettingsModalOpen(true)}
+        onOpenSettings={() => { setIsSettingsModalOpen(false); handleViewChange("settings"); }}
         onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
         isOptimizing={isOptimizing}
       />
@@ -375,7 +393,7 @@ export default function App() {
           allProjects={ALL_PROJECTS}
           onSelectProject={handleSelectProject}
           currentView={currentView}
-          onViewChange={setCurrentView}
+          onViewChange={handleViewChange}
           onRunOptimization={runOptimizationSimulation}
           isOptimizing={isOptimizing}
           onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
@@ -432,7 +450,7 @@ export default function App() {
                     currentModel: n.optimizedModel
                   }))
                 }));
-                setCurrentView('graph');
+                handleViewChange('graph');
               }}
               onOpenExport={() => setIsExportModalOpen(true)}
             />
@@ -450,6 +468,13 @@ export default function App() {
               project={project}
             />
           )}
+
+          {currentView === 'settings' && (
+            <SettingsView
+              project={project}
+              onUpdateProjectSettings={(settings) => setProject((prev) => ({ ...prev, ...settings }))}
+            />
+          )}
         </main>
       </div>
 
@@ -464,11 +489,11 @@ export default function App() {
         onClose={() => setIsOptModalOpen(false)}
         onApplyAndCompare={() => {
           setIsOptModalOpen(false);
-          setCurrentView('diff');
+          handleViewChange('diff');
         }}
         onOpenFrontier={() => {
           setIsOptModalOpen(false);
-          setCurrentView('frontier');
+          handleViewChange('frontier');
         }}
       />
 
@@ -476,7 +501,7 @@ export default function App() {
       <CommandPalette
         isOpen={isCommandPaletteOpen}
         onClose={() => setIsCommandPaletteOpen(false)}
-        onViewChange={setCurrentView}
+        onViewChange={handleViewChange}
         onRunOptimization={runOptimizationSimulation}
         onSelectProject={handleSelectProject}
         onOpenExport={() => setIsExportModalOpen(true)}
