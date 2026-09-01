@@ -57,13 +57,21 @@ variable "route53_zone_name" {
   nullable    = true
 }
 
+variable "temporary_http" {
+  description = "Development-only mode: expose the ALB over its AWS HTTP DNS name without Route53/ACM."
+  type        = bool
+  default     = false
+}
+
 variable "domain_name" {
-  description = "Fully qualified public hostname for the API, for example api.example.com."
+  description = "Fully qualified public hostname for the API. Required unless temporary_http is true."
   type        = string
+  default     = null
+  nullable    = true
 
   validation {
-    condition     = can(regex("^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$", var.domain_name))
-    error_message = "domain_name must be a valid DNS hostname."
+    condition     = var.domain_name == null || can(regex("^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$", var.domain_name))
+    error_message = "domain_name must be a valid DNS hostname when supplied."
   }
 }
 

@@ -1,6 +1,6 @@
 output "api_url" {
-  description = "Public HTTPS API URL."
-  value       = "https://${var.domain_name}"
+  description = "API URL. Temporary HTTP mode returns the ALB DNS endpoint; production mode returns the HTTPS domain."
+  value       = var.temporary_http ? "http://${aws_lb.api.dns_name}" : "https://${var.domain_name}"
 }
 
 output "api_load_balancer_dns_name" {
@@ -41,6 +41,11 @@ output "ecs_api_service_name" {
 output "ecs_worker_service_name" {
   description = "ECS worker service name."
   value       = aws_ecs_service.worker.name
+}
+
+output "migration_task_definition_arn" {
+  description = "One-off ECS task definition used to run Alembic migrations."
+  value       = aws_ecs_task_definition.migration.arn
 }
 
 output "rds_endpoint" {

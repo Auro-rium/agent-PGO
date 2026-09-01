@@ -20,9 +20,9 @@ locals {
     "10.20.144.0/20",
   ]
 
-  route53_zone_id = var.route53_zone_id != null ? var.route53_zone_id : try(data.aws_route53_zone.existing[0].zone_id, null)
+  route53_zone_id = var.temporary_http ? null : (var.route53_zone_id != null ? var.route53_zone_id : try(data.aws_route53_zone.existing[0].zone_id, null))
 
-  certificate_arn = var.certificate_arn != null ? var.certificate_arn : aws_acm_certificate_validation.api[0].certificate_arn
+  certificate_arn = var.temporary_http ? null : (var.certificate_arn != null ? var.certificate_arn : aws_acm_certificate_validation.api[0].certificate_arn)
 
   api_image    = var.api_image != null ? var.api_image : "${aws_ecr_repository.backend.repository_url}:${var.image_tag}"
   worker_image = var.worker_image != null ? var.worker_image : "${aws_ecr_repository.backend.repository_url}:${var.image_tag}"

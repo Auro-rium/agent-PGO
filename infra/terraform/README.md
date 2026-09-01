@@ -12,8 +12,13 @@ This module provisions the backend V1 baseline in `us-east-1`:
 
 ## Required inputs
 
-The AWS account must already contain a public Route53 hosted zone. Supply either
-`route53_zone_id` (recommended) or `route53_zone_name`, plus the API hostname:
+Production HTTPS mode requires an existing public Route53 hosted zone. Supply either
+`route53_zone_id` (recommended) or `route53_zone_name`, plus the API hostname.
+
+For temporary smoke testing without a domain, set `temporary_http = true`. Terraform
+then exposes the ALB-generated AWS DNS name over HTTP and skips Route53/ACM. This mode
+is not production-safe and should be replaced with HTTPS before customer traffic.
+
 
 ```hcl
 # terraform.tfvars (do not commit secrets)

@@ -21,10 +21,13 @@ resource "aws_iam_role_policy" "execution" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "WriteContainerLogs"
-        Effect   = "Allow"
-        Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
-        Resource = [aws_cloudwatch_log_group.api.arn, aws_cloudwatch_log_group.worker.arn]
+        Sid    = "WriteContainerLogs"
+        Effect = "Allow"
+        Action = ["logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource = [
+          "${aws_cloudwatch_log_group.api.arn}:*",
+          "${aws_cloudwatch_log_group.worker.arn}:*",
+        ]
       },
       {
         Sid      = "ReadRuntimeSecret"

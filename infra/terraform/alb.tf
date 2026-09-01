@@ -27,7 +27,7 @@ resource "aws_lb_target_group" "api" {
 }
 
 resource "aws_acm_certificate" "api" {
-  count             = var.certificate_arn == null ? 1 : 0
+  count             = var.temporary_http || var.certificate_arn != null ? 0 : 1
   domain_name       = var.domain_name
   validation_method = "DNS"
   key_algorithm     = "EC_prime256v1"
@@ -35,13 +35,13 @@ resource "aws_acm_certificate" "api" {
 }
 
 resource "aws_route53_record" "certificate_validation" {
-  for_each = var.certificate_arn == null ? {
+  for_each = var.temporary_http || var.certificate_arn != null ? {} : {
     for dvo in aws_acm_certificate.api[0].domain_validation_options : dvo.domain_name => {
       name   = dvo.resource_record_name
       record = dvo.resource_record_value
       type   = dvo.resource_record_type
     }
-  } : {}
+  }
 
   zone_id         = local.route53_zone_id
   name            = each.value.name
@@ -52,12 +52,25 @@ resource "aws_route53_record" "certificate_validation" {
 }
 
 resource "aws_acm_certificate_validation" "api" {
-  count                   = var.certificate_arn == null ? 1 : 0
+  count                   = var.temporary_http || var.certificate_arn != null ? 0 : 1
   certificate_arn         = aws_acm_certificate.api[0].arn
   validation_record_fqdns = [for record in aws_route53_record.certificate_validation : record.fqdn]
 }
 
 resource "aws_lb_listener" "http" {
+  count             = var.temporary_http ? 1 : 0
+  load_balancer_arn = aws_lb.api.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.api.arn
+  }
+}
+
+resource "aws_lb_listener" "http_redirect" {
+  count             = var.temporary_http ? 0 : 1
   load_balancer_arn = aws_lb.api.arn
   port              = 80
   protocol          = "HTTP"
@@ -73,6 +86,7 @@ resource "aws_lb_listener" "http" {
 }
 
 resource "aws_lb_listener" "https" {
+  count             = var.temporary_http ? 0 : 1
   load_balancer_arn = aws_lb.api.arn
   port              = 443
   protocol          = "HTTPS"
@@ -86,6 +100,7 @@ resource "aws_lb_listener" "https" {
 }
 
 resource "aws_route53_record" "api" {
+  count   = var.temporary_http ? 0 : 1
   zone_id = local.route53_zone_id
   name    = var.domain_name
   type    = "A"

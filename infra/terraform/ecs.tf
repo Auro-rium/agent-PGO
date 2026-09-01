@@ -64,6 +64,34 @@ resource "aws_ecs_task_definition" "api" {
   }])
 }
 
+resource "aws_ecs_task_definition" "migration" {
+  family                   = "${local.name}-migration"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = var.api_cpu
+  memory                   = var.api_memory
+  execution_role_arn       = aws_iam_role.execution.arn
+  task_role_arn            = aws_iam_role.api_task.arn
+
+  container_definitions = jsonencode([{
+    name        = "migration"
+    image       = local.api_image
+    essential   = true
+    command     = ["alembic", "-c", "migrations/alembic.ini", "upgrade", "head"]
+    environment = concat(local.common_environment, [{ name = "APP_ROLE", value = "migration" }])
+    secrets     = [{ name = "DATABASE_URL", valueFrom = "${aws_secretsmanager_secret.runtime.arn}:DATABASE_URL::" }]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.api.name
+        awslogs-region        = "us-east-1"
+        awslogs-stream-prefix = "migration"
+      }
+    }
+    stopTimeout = 30
+  }])
+}
+
 resource "aws_ecs_task_definition" "worker" {
   family                   = "${local.name}-worker"
   requires_compatibilities = ["FARGATE"]
@@ -74,12 +102,15 @@ resource "aws_ecs_task_definition" "worker" {
   task_role_arn            = aws_iam_role.worker_task.arn
 
   container_definitions = jsonencode([{
-    name        = "worker"
-    image       = local.worker_image
-    essential   = true
-    command     = var.worker_command
-    environment = concat(local.common_environment, [{ name = "APP_ROLE", value = "worker" }])
-    secrets     = [{ name = "DATABASE_URL", valueFrom = "${aws_secretsmanager_secret.runtime.arn}:DATABASE_URL::" }]
+    name      = "worker"
+    image     = local.worker_image
+    essential = true
+    command   = var.worker_command
+    environment = concat(local.common_environment, [
+      { name = "APP_ROLE", value = "worker" },
+      { name = "SQS_DLQ_URL", value = aws_sqs_queue.dead_letter.url },
+    ])
+    secrets = [{ name = "DATABASE_URL", valueFrom = "${aws_secretsmanager_secret.runtime.arn}:DATABASE_URL::" }]
     logConfiguration = {
       logDriver = "awslogs"
       options = {
@@ -120,7 +151,7 @@ resource "aws_ecs_service" "api" {
     container_port   = 8000
   }
 
-  depends_on = [aws_lb_listener.https]
+  depends_on = [aws_lb_listener.http, aws_lb_listener.http_redirect, aws_lb_listener.https]
 }
 
 resource "aws_ecs_service" "worker" {
