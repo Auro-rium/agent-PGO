@@ -18,7 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from . import models as api_models
-from .auth import Tenant, authenticate
+from .auth import Tenant, _configured_demo_tenant, _demo_enabled, authenticate, issue_demo_token
 from .db import create_session_factory, session_dependency
 from .models import Job, Organization, Project, ProjectLayout, ProjectSettings, ProjectVersion, Trace
 from .project_serializers import (
@@ -412,6 +412,22 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
             "authType": "demo" if tenant.api_key_id.startswith("demo:") else "api_key",
         }
         return result
+
+    @app.post("/v1/auth/demo", tags=["auth"])
+    def demo_sign_in() -> dict[str, Any]:
+        """Issue a short-lived token for the explicitly enabled test workspace.
+
+        This endpoint is intentionally unavailable when APP_ENV is production.
+        It lets the static demo frontend obtain a token at runtime without
+        embedding a bearer credential in its public JavaScript bundle.
+        """
+        if not _demo_enabled():
+            raise HTTPException(status_code=404, detail="Demo authentication is disabled")
+        organization_id, project_id = _configured_demo_tenant()
+        if not organization_id:
+            raise HTTPException(status_code=503, detail="Demo authentication is not configured")
+        token = issue_demo_token(organization_id=organization_id, project_id=project_id, expires_in_seconds=3600)
+        return {"accessToken": token, "tokenType": "Bearer", "expiresIn": 3600}
 
     @app.get("/v1/organizations/me", tags=["organizations"])
     def current_organization(tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
