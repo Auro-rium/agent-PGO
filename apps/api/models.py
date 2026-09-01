@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -54,6 +54,189 @@ class Project(Base):
     organization: Mapped[Organization] = relationship(back_populates="projects")
     api_keys: Mapped[list[ApiKey]] = relationship(back_populates="project")
     traces: Mapped[list[Trace]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    versions: Mapped[list[ProjectVersion]] = relationship(
+        back_populates="project", cascade="all, delete-orphan", order_by="ProjectVersion.created_at"
+    )
+    settings: Mapped[ProjectSettings | None] = relationship(
+        back_populates="project", cascade="all, delete-orphan", uselist=False
+    )
+    layouts: Mapped[list[ProjectLayout]] = relationship(
+        back_populates="project", cascade="all, delete-orphan", order_by="ProjectLayout.revision"
+    )
+
+
+class ProjectVersion(Base):
+    """Immutable agent graph and aggregate metrics for one project release."""
+
+    __tablename__ = "project_versions"
+    __table_args__ = (
+        UniqueConstraint("project_id", "version", name="uq_project_versions_project_version"),
+        Index("ix_project_versions_organization_created", "organization_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment: Mapped[str] = mapped_column(String(32), nullable=False, default="STAGING")
+    run_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    total_executions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    baseline_cost: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False, default=0)
+    optimized_cost: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False, default=0)
+    savings_pct: Mapped[float] = mapped_column(Numeric(9, 4), nullable=False, default=0)
+    monthly_savings_estimate: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False, default=0)
+    monthly_requests: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    baseline_latency_p95: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False, default=0)
+    optimized_latency_p95: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False, default=0)
+    baseline_quality: Mapped[float] = mapped_column(Numeric(9, 4), nullable=False, default=0)
+    optimized_quality: Mapped[float] = mapped_column(Numeric(9, 4), nullable=False, default=0)
+    eval_cases_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    quality_tolerance_pct: Mapped[float] = mapped_column(Numeric(9, 4), nullable=False, default=1)
+    confidence_pct: Mapped[float] = mapped_column(Numeric(9, 4), nullable=False, default=95)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+    project: Mapped[Project] = relationship(back_populates="versions")
+    nodes: Mapped[list[AgentNode]] = relationship(
+        back_populates="version", cascade="all, delete-orphan", order_by="AgentNode.ordinal"
+    )
+    edges: Mapped[list[GraphEdge]] = relationship(
+        back_populates="version", cascade="all, delete-orphan", order_by="GraphEdge.ordinal"
+    )
+
+
+class AgentNode(Base):
+    """Persisted node telemetry/configuration for a project version."""
+
+    __tablename__ = "agent_nodes"
+    __table_args__ = (
+        UniqueConstraint("version_id", "node_id", name="uq_agent_nodes_version_node"),
+        Index("ix_agent_nodes_project", "project_id", "version_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("project_versions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    node_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    x: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    y: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    baseline_model: Mapped[str] = mapped_column(String(255), nullable=False)
+    current_model: Mapped[str] = mapped_column(String(255), nullable=False)
+    optimized_model: Mapped[str] = mapped_column(String(255), nullable=False)
+    calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    avg_cost: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False, default=0)
+    baseline_cost: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False, default=0)
+    optimized_cost: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False, default=0)
+    latency_sec: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False, default=0)
+    baseline_latency_sec: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False, default=0)
+    optimized_latency_sec: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False, default=0)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost_share_pct: Mapped[float] = mapped_column(Numeric(9, 4), nullable=False, default=0)
+    quality_sensitivity: Mapped[str] = mapped_column(String(16), nullable=False, default="MEDIUM")
+    is_hotspot: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    prompt_template: Mapped[str | None] = mapped_column(Text, nullable=True)
+    candidates: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    version: Mapped[ProjectVersion] = relationship(back_populates="nodes")
+
+
+class GraphEdge(Base):
+    """Directed execution edge between nodes in one immutable graph snapshot."""
+
+    __tablename__ = "graph_edges"
+    __table_args__ = (
+        UniqueConstraint("version_id", "edge_id", name="uq_graph_edges_version_edge"),
+        Index("ix_graph_edges_project", "project_id", "version_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("project_versions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    edge_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    from_node: Mapped[str] = mapped_column(String(255), nullable=False)
+    to_node: Mapped[str] = mapped_column(String(255), nullable=False)
+    label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    throughput_tokens_per_sec: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False, default=0)
+    avg_latency_ms: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False, default=0)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    version: Mapped[ProjectVersion] = relationship(back_populates="edges")
+
+
+class ProjectSettings(Base):
+    """Mutable, tenant-scoped browser optimization settings."""
+
+    __tablename__ = "project_settings"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    )
+    quality_tolerance_pct: Mapped[float] = mapped_column(Numeric(9, 4), nullable=False, default=1)
+    confidence_pct: Mapped[float] = mapped_column(Numeric(9, 4), nullable=False, default=95)
+    max_p95_latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    objective: Mapped[dict] = mapped_column(JSON, nullable=False, default=lambda: {"minimize": ["cost", "latency"]})
+    allowed_models: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+    project: Mapped[Project] = relationship(back_populates="settings")
+
+
+class ProjectLayout(Base):
+    """Revisioned UI-only node positions; never used as execution truth."""
+
+    __tablename__ = "project_layouts"
+    __table_args__ = (
+        UniqueConstraint("project_id", "revision", name="uq_project_layouts_project_revision"),
+        Index("ix_project_layouts_project_updated", "project_id", "updated_at"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("project_versions.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    nodes: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+    project: Mapped[Project] = relationship(back_populates="layouts")
 
 
 class ApiKey(Base):

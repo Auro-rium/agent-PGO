@@ -13,13 +13,22 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, sta
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import or_, select
+from sqlalchemy import desc, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from . import models as api_models
 from .auth import Tenant, authenticate
 from .db import create_session_factory, session_dependency
-from .models import Job, Organization, Project, Trace
+from .models import Job, Organization, Project, ProjectLayout, ProjectSettings, ProjectVersion, Trace
+from .project_serializers import (
+    GraphValidationError,
+    serialize_layout,
+    serialize_project,
+    serialize_settings,
+    serialize_version,
+    validate_graph,
+)
 from .schemas import IngestionResponse, OTLPExportRequest
 from services.worker.queue import SQSQueuePublisher
 
@@ -90,6 +99,60 @@ class ProjectResponse(BaseModel):
     organization_id: str
     name: str
     slug: str
+
+
+class ProjectSettingsPatch(BaseModel):
+    model_config = {"populate_by_name": True}
+
+    quality_tolerance_pp: float | None = Field(default=None, alias="qualityTolerancePp", ge=0, le=100)
+    quality_tolerance_pct: float | None = Field(default=None, alias="qualityTolerancePct", ge=0, le=100)
+    confidence_pct: float | None = Field(default=None, alias="confidencePct", ge=0, le=100)
+    max_p95_latency_ms: int | None = Field(default=None, alias="maxP95LatencyMs", ge=1, le=3_600_000)
+    objective: dict[str, Any] | None = None
+    allowed_models: list[str] | None = Field(default=None, alias="allowedModels", max_length=256)
+
+    @field_validator("objective")
+    @classmethod
+    def valid_objective(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is not None and len(json.dumps(value, default=str)) > 16 * 1024:
+            raise ValueError("objective is too large")
+        return value
+
+
+class LayoutWrite(BaseModel):
+    model_config = {"populate_by_name": True}
+
+    version_id: str | None = Field(default=None, alias="versionId", max_length=255)
+    revision: int | None = Field(default=None, ge=0)
+    nodes: dict[str, dict[str, float]] = Field(default_factory=dict, max_length=512)
+
+    @field_validator("nodes")
+    @classmethod
+    def valid_nodes(cls, value: dict[str, dict[str, float]]) -> dict[str, dict[str, float]]:
+        for node_id, position in value.items():
+            if not node_id or len(node_id) > 255 or set(position) != {"x", "y"}:
+                raise ValueError("layout nodes must contain finite x/y positions")
+            if not all(isinstance(coordinate, (int, float)) and abs(coordinate) <= 1e7 for coordinate in position.values()):
+                raise ValueError("layout coordinates are out of range")
+        return value
+
+
+class VersionCreate(BaseModel):
+    model_config = {"populate_by_name": True}
+
+    version: str = Field(min_length=1, max_length=64)
+    environment: str = Field(default="STAGING", min_length=1, max_length=32)
+    run_id: str | None = Field(default=None, alias="runId", max_length=255)
+    nodes: list[dict[str, Any]] = Field(default_factory=list, max_length=512)
+    edges: list[dict[str, Any]] = Field(default_factory=list, max_length=1024)
+    metrics: dict[str, Any] = Field(default_factory=dict, max_length=64)
+
+    @field_validator("nodes", "edges")
+    @classmethod
+    def bounded_graph_values(cls, value: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if len(json.dumps(value, default=str)) > 512 * 1024:
+            raise ValueError("graph payload is too large")
+        return value
 
 
 class EvalCreate(BaseModel):
@@ -372,6 +435,188 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
             session.rollback(); raise HTTPException(status_code=409, detail="Project slug already exists")
         session.refresh(project); return project
 
+    def _project_version(project_id: str, version_id: str | None, tenant: Tenant, session: Session) -> ProjectVersion:
+        project = _project_reference(project_id, tenant=tenant, session=session)
+        query = select(ProjectVersion).where(
+            ProjectVersion.project_id == project.id,
+            ProjectVersion.organization_id == tenant.organization_id,
+        )
+        if version_id:
+            query = query.where(ProjectVersion.id == version_id)
+        else:
+            query = query.order_by(desc(ProjectVersion.created_at))
+        version = session.scalar(query)
+        if version is None:
+            raise HTTPException(status_code=404, detail="Project version not found")
+        return version
+
+    def _latest_version(project: Project, session: Session) -> ProjectVersion | None:
+        return session.scalar(
+            select(ProjectVersion)
+            .where(ProjectVersion.project_id == project.id, ProjectVersion.organization_id == project.organization_id)
+            .order_by(desc(ProjectVersion.created_at))
+        )
+
+    def _metric(metrics: dict[str, Any], *names: str, default: Any = 0) -> Any:
+        for name in names:
+            if name in metrics:
+                return metrics[name]
+        return default
+
+    def _canonical_model(value: Any, field_name: str) -> str:
+        model = str(value or "").strip()
+        if not model or "/" not in model or len(model) > 255:
+            raise HTTPException(status_code=422, detail=f"{field_name} must be a canonical provider/model identifier")
+        return model
+
+    @app.get("/v1/projects/{project_id}", response_model=dict[str, Any], tags=["projects"])
+    def project_detail(project_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        project = _project_reference(project_id, tenant=tenant, session=session)
+        return serialize_project(project, _latest_version(project, session))
+
+    @app.get("/v1/projects/{project_id}/versions", response_model=dict[str, Any], tags=["projects"])
+    def project_versions(project_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        project = _project_reference(project_id, tenant=tenant, session=session)
+        versions = session.scalars(
+            select(ProjectVersion).where(ProjectVersion.project_id == project.id).order_by(desc(ProjectVersion.created_at))
+        ).all()
+        return {"data": [serialize_version(version) for version in versions], "page": {"nextCursor": None}}
+
+    @app.post("/v1/projects/{project_id}/versions", response_model=dict[str, Any], status_code=201, tags=["projects"])
+    def create_project_version(project_id: str, body: VersionCreate, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        project = _project_reference(project_id, tenant=tenant, session=session)
+        try:
+            validate_graph(body.nodes, body.edges)
+        except GraphValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        node_ids = {str(item.get("nodeId", item.get("id", ""))) for item in body.nodes}
+        nodes: list[api_models.AgentNode] = []
+        for ordinal, item in enumerate(body.nodes):
+            node_id = str(item.get("nodeId", item.get("id", ""))).strip()
+            baseline_model = _canonical_model(item.get("baselineModel", item.get("baseline_model")), "baselineModel")
+            current_model = _canonical_model(item.get("currentModel", item.get("current_model", baseline_model)), "currentModel")
+            optimized_model = _canonical_model(item.get("optimizedModel", item.get("optimized_model", current_model)), "optimizedModel")
+            candidates = item.get("candidates", [])
+            if not isinstance(candidates, list):
+                raise HTTPException(status_code=422, detail="node candidates must be an array")
+            nodes.append(api_models.AgentNode(
+                organization_id=tenant.organization_id, project_id=project.id, node_id=node_id,
+                name=str(item.get("name", node_id))[:255], role=str(item.get("role", ""))[:255],
+                x=float(item.get("x", 0)), y=float(item.get("y", 0)), baseline_model=baseline_model,
+                current_model=current_model, optimized_model=optimized_model, calls=int(item.get("calls", 0)),
+                avg_cost=_metric(item, "avgCost", "avg_cost"), baseline_cost=_metric(item, "baselineCost", "baseline_cost"),
+                optimized_cost=_metric(item, "optimizedCost", "optimized_cost"), latency_sec=_metric(item, "latencySec", "latency_sec"),
+                baseline_latency_sec=_metric(item, "baselineLatencySec", "baseline_latency_sec"), optimized_latency_sec=_metric(item, "optimizedLatencySec", "optimized_latency_sec"),
+                input_tokens=int(item.get("inputTokens", item.get("input_tokens", 0))), output_tokens=int(item.get("outputTokens", item.get("output_tokens", 0))),
+                cost_share_pct=_metric(item, "costSharePct", "cost_share_pct"), quality_sensitivity=str(item.get("qualitySensitivity", item.get("quality_sensitivity", "MEDIUM"))).upper(),
+                is_hotspot=bool(item.get("isHotspot", item.get("is_hotspot", False))), candidates=candidates, ordinal=ordinal,
+            ))
+        version = ProjectVersion(
+            organization_id=tenant.organization_id, project_id=project.id, version=body.version,
+            environment=body.environment.upper(), run_id=body.run_id, nodes=nodes,
+            total_executions=int(_metric(body.metrics, "totalExecutions", "total_executions")),
+            baseline_cost=_metric(body.metrics, "baselineCost", "baseline_cost"), optimized_cost=_metric(body.metrics, "optimizedCost", "optimized_cost"),
+            savings_pct=_metric(body.metrics, "savingsPct", "savings_pct"), monthly_savings_estimate=_metric(body.metrics, "monthlySavingsEstimate", "monthly_savings_estimate"),
+            monthly_requests=int(_metric(body.metrics, "monthlyRequests", "monthly_requests")), baseline_latency_p95=_metric(body.metrics, "baselineLatencyP95", "baseline_latency_p95"),
+            optimized_latency_p95=_metric(body.metrics, "optimizedLatencyP95", "optimized_latency_p95"), baseline_quality=_metric(body.metrics, "baselineQuality", "baseline_quality"),
+            optimized_quality=_metric(body.metrics, "optimizedQuality", "optimized_quality"), eval_cases_count=int(_metric(body.metrics, "evalCasesCount", "eval_cases_count")),
+            quality_tolerance_pct=_metric(body.metrics, "qualityTolerancePct", "quality_tolerance_pct", default=1), confidence_pct=_metric(body.metrics, "confidencePct", "confidence_pct", default=95),
+        )
+        version.edges = [api_models.GraphEdge(
+            organization_id=tenant.organization_id, project_id=project.id,
+            edge_id=str(item.get("edgeId", item.get("id", f"edge-{ordinal}"))),
+            from_node=str(item.get("from", item.get("fromNode", item.get("from_node", "")))),
+            to_node=str(item.get("to", item.get("toNode", item.get("to_node", "")))),
+            label=item.get("label"), throughput_tokens_per_sec=_metric(item, "throughputTokensPerSec", "throughput_tokens_per_sec"),
+            avg_latency_ms=_metric(item, "avgLatencyMs", "avg_latency_ms"), ordinal=ordinal,
+        ) for ordinal, item in enumerate(body.edges)]
+        session.add(version)
+        try:
+            session.commit()
+        except IntegrityError as exc:
+            session.rollback()
+            raise HTTPException(status_code=409, detail="Project version already exists") from exc
+        session.refresh(version)
+        return serialize_version(version)
+
+    @app.get("/v1/projects/{project_id}/versions/{version_id}", response_model=dict[str, Any], tags=["projects"])
+    def project_version_detail(project_id: str, version_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        return serialize_version(_project_version(project_id, version_id, tenant, session))
+
+    def _settings(project: Project, tenant: Tenant, session: Session) -> ProjectSettings:
+        settings = session.scalar(select(ProjectSettings).where(ProjectSettings.project_id == project.id, ProjectSettings.organization_id == tenant.organization_id))
+        if settings is None:
+            settings = ProjectSettings(organization_id=tenant.organization_id, project_id=project.id)
+            session.add(settings)
+            session.commit()
+            session.refresh(settings)
+        return settings
+
+    @app.get("/v1/projects/{project_id}/settings", response_model=dict[str, Any], tags=["projects"])
+    def get_project_settings(project_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        project = _project_reference(project_id, tenant=tenant, session=session)
+        return serialize_settings(_settings(project, tenant, session))
+
+    @app.patch("/v1/projects/{project_id}/settings", response_model=dict[str, Any], tags=["projects"])
+    def patch_project_settings(project_id: str, body: ProjectSettingsPatch, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        project = _project_reference(project_id, tenant=tenant, session=session)
+        if body.quality_tolerance_pp is not None and body.quality_tolerance_pct is not None and body.quality_tolerance_pp != body.quality_tolerance_pct:
+            raise HTTPException(status_code=422, detail="quality tolerance aliases must match")
+        settings = _settings(project, tenant, session)
+        tolerance = body.quality_tolerance_pp if body.quality_tolerance_pp is not None else body.quality_tolerance_pct
+        if tolerance is not None:
+            settings.quality_tolerance_pct = tolerance
+        for field_name in ("confidence_pct", "max_p95_latency_ms", "objective", "allowed_models"):
+            value = getattr(body, field_name)
+            if value is not None:
+                setattr(settings, field_name, value)
+        session.commit()
+        session.refresh(settings)
+        return serialize_settings(settings)
+
+    def _if_match_revision(value: str | None) -> int | None:
+        if not value:
+            return None
+        candidate = value.strip().removeprefix("W/").strip('"')
+        try:
+            return int(candidate)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="If-Match must contain a numeric layout revision")
+
+    @app.get("/v1/projects/{project_id}/layout", response_model=dict[str, Any], tags=["projects"])
+    def get_project_layout(project_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        project = _project_reference(project_id, tenant=tenant, session=session)
+        layout = session.scalar(select(ProjectLayout).where(ProjectLayout.project_id == project.id).order_by(desc(ProjectLayout.revision)))
+        return serialize_layout(layout, project.id)
+
+    @app.post("/v1/projects/{project_id}/layout", response_model=dict[str, Any], tags=["projects"])
+    def write_project_layout(project_id: str, body: LayoutWrite, request: Request, if_match: str | None = Header(default=None), tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        project = _project_reference(project_id, tenant=tenant, session=session)
+        header_revision = _if_match_revision(if_match)
+        if body.revision is not None and header_revision is not None and body.revision != header_revision:
+            raise HTTPException(status_code=409, detail="Layout revision conflict")
+        supplied_revision = body.revision if body.revision is not None else header_revision
+        if supplied_revision is None:
+            raise HTTPException(status_code=409, detail="Layout revision or If-Match is required")
+        current = session.scalar(select(ProjectLayout).where(ProjectLayout.project_id == project.id).order_by(desc(ProjectLayout.revision)))
+        current_revision = current.revision if current else 0
+        if supplied_revision != current_revision:
+            raise HTTPException(status_code=409, detail="Layout revision conflict")
+        version_id = body.version_id
+        if version_id:
+            _project_version(project.id, version_id, tenant, session)
+        layout = ProjectLayout(organization_id=tenant.organization_id, project_id=project.id, version_id=version_id, revision=current_revision + 1, nodes=body.nodes)
+        session.add(layout)
+        try:
+            session.commit()
+        except IntegrityError as exc:
+            session.rollback()
+            raise HTTPException(status_code=409, detail="Layout revision conflict") from exc
+        session.refresh(layout)
+        response = serialize_layout(layout, project.id)
+        response["revision"] = layout.revision
+        return response
+
     @app.post("/v1/traces", response_model=IngestionResponse, tags=["otlp"], dependencies=[Depends(_require_json)])
     @app.post("/v1/otlp/v1/traces", response_model=IngestionResponse, include_in_schema=False, tags=["otlp"], dependencies=[Depends(_require_json)])
     def ingest_traces(request: Request, payload: OTLPExportRequest, project_id: str | None = Query(default=None), tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> IngestionResponse:
@@ -460,6 +705,21 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
     @app.post("/v1/optimizations", response_model=RunResponse, status_code=202, tags=["optimizations"])
     def create_optimization(body: RunCreate, request: Request, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> RunResponse: return _queue_run("optimization", body, request, tenant, session)
 
+    @app.post("/v1/projects/{project_id}/optimization-runs", response_model=dict[str, Any], status_code=202, tags=["optimizations"])
+    def start_frontend_optimization(project_id: str, payload: dict[str, Any], request: Request, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        """Accept the browser contract while retaining the canonical run payload."""
+        raw_budget = payload.get("maxExperimentCostUsd", payload.get("max_experiment_cost_usd", 25.0))
+        try:
+            budget = float(raw_budget)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="maxExperimentCostUsd must be numeric") from exc
+        config = payload.get("config") if isinstance(payload.get("config"), dict) else dict(payload)
+        config.pop("projectVersionId", None)
+        config.pop("evalSuiteId", None)
+        body = RunCreate(project_id=project_id, dataset_id=payload.get("evalSuiteId") or payload.get("datasetId"), config=config, max_experiment_cost_usd=budget)
+        result = _queue_run("optimization", body, request, tenant, session)
+        return {"runId": result.run_id, "status": result.status, "createdAt": datetime.now(timezone.utc).isoformat()}
+
     def _run_for_tenant(run_id: str, kind: str, tenant: Tenant, session: Session) -> dict[str, Any]:
         query = select(Job).where(Job.id == run_id, Job.organization_id == tenant.organization_id, Job.kind == kind)
         if tenant.project_id: query = query.where(Job.project_id == tenant.project_id)
@@ -474,10 +734,66 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
     @app.get("/v1/optimizations/{run_id}", response_model=dict[str, Any], tags=["optimizations"])
     def get_optimization(run_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)): return _run_for_tenant(run_id, "optimization", tenant, session)
 
+    @app.get("/v1/eval-runs/{run_id}/cases", response_model=dict[str, Any], tags=["evals"])
+    def frontend_eval_cases(run_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        run = _run_for_tenant(run_id, "optimization", tenant, session)
+        dataset_id = (run.get("config") or {}).get("dataset_id") or (run.get("config") or {}).get("datasetId")
+        if not dataset_id:
+            return {"cases": [], "page": {"nextCursor": None}}
+        dataset = _dataset_for_request(str(dataset_id), tenant=tenant, project=session.get(Project, run["project_id"]), session=session)
+        cases: list[dict[str, Any]] = []
+        for case in dataset.cases:
+            metadata = case.metadata_json if isinstance(case.metadata_json, dict) else {}
+            # Metadata-only by default: prompts remain absent unless explicitly
+            # enabled for a project-level content debugging session.
+            prompt = case.input_data if os.getenv("AGENTPGO_STORE_CONTENT", "").lower() in {"1", "true", "yes"} else None
+            cases.append({"id": case.case_id, "category": str(metadata.get("category", "default")), "prompt": prompt, "baselineScore": float(metadata.get("baselineScore", 0)), "optimizedScore": float(metadata.get("optimizedScore", 0)), "baselineLatencyMs": float(metadata.get("baselineLatencyMs", 0)), "optimizedLatencyMs": float(metadata.get("optimizedLatencyMs", 0)), "status": str(metadata.get("status", "PASS")).upper(), "passed": bool(metadata.get("passed", True)), "diffNote": str(metadata.get("diffNote", ""))})
+        return {"cases": cases, "page": {"nextCursor": None}}
+
     @app.get("/v1/optimizations/{run_id}/candidates", response_model=list[dict[str, Any]], tags=["optimizations"])
     def optimization_candidates(run_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)):
         run = _run_for_tenant(run_id, "optimization", tenant, session); job = session.get(Job, run_id)
         return [{"id": row.candidate_id, **row.result} for row in (job.candidate_results if job else [])]
+
+    @app.get("/v1/optimization-runs/{run_id}/candidates", response_model=dict[str, Any], tags=["optimizations"])
+    def frontend_optimization_candidates(run_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        run = _run_for_tenant(run_id, "optimization", tenant, session)
+        job = session.get(Job, run_id)
+        rows = [{"id": row.candidate_id, **row.result} for row in (job.candidate_results if job else [])]
+        return {"candidates": rows, "page": {"nextCursor": None}}
+
+    @app.get("/v1/optimization-runs/{run_id}/events", response_model=dict[str, Any], tags=["optimizations"])
+    def frontend_optimization_events(run_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        run = _run_for_tenant(run_id, "optimization", tenant, session)
+        result = run.get("result") or {}
+        events = result.get("events", []) if isinstance(result, dict) else []
+        return {"events": events if isinstance(events, list) else [], "page": {"nextCursor": None}}
+
+    @app.post("/v1/optimization-runs/{run_id}/select", response_model=dict[str, Any], tags=["optimizations"])
+    def select_frontend_candidate(run_id: str, payload: dict[str, Any], tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        run = _run_for_tenant(run_id, "optimization", tenant, session)
+        candidate_id = str(payload.get("candidateId", payload.get("candidate_id", ""))).strip()
+        if not candidate_id:
+            raise HTTPException(status_code=422, detail="candidateId is required")
+        job = session.get(Job, run_id)
+        row = next((item for item in (job.candidate_results if job else []) if item.candidate_id == candidate_id), None)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+        recommendation = dict(row.result or {})
+        recommendation["candidateId"] = candidate_id
+        recommendation["selected"] = True
+        job.result = {**(job.result or {}), "recommendation": recommendation}
+        result_cls = getattr(api_models, "OptimizationResult", None)
+        if result_cls is not None:
+            stored = session.scalar(select(result_cls).where(result_cls.job_id == run_id, result_cls.organization_id == tenant.organization_id))
+            if stored is None:
+                stored = result_cls(organization_id=tenant.organization_id, project_id=job.project_id, job_id=run_id, status="completed", recommendation=recommendation, metadata_json={})
+                session.add(stored)
+            else:
+                stored.recommendation = recommendation
+        session.commit()
+        project = session.get(Project, job.project_id) if job and job.project_id else None
+        return serialize_project(project, _latest_version(project, session)) if project is not None else recommendation
 
     @app.get("/v1/optimizations/{run_id}/recommendation", response_model=dict[str, Any], tags=["optimizations"])
     def optimization_recommendation(run_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)):
@@ -498,6 +814,11 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
         metadata = getattr(result, "metadata_json", None) or getattr(result, "metadata", None)
         if metadata: payload["metadata"] = metadata
         return payload
+
+    @app.get("/v1/optimization-runs/{run_id}/export", response_model=dict[str, Any], tags=["optimizations"])
+    def frontend_export(run_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        run = _run_for_tenant(run_id, "optimization", tenant, session)
+        return _persisted_export(run["project_id"], run_id, tenant, session)
 
     @app.get("/v1/policy/export", response_model=dict[str, Any], include_in_schema=False, tags=["optimizations"])
     def policy_export(project: str | None = None, project_id: str | None = None, run_id: str | None = None, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)): return _persisted_export(project_id or project, run_id, tenant, session)
