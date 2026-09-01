@@ -88,7 +88,7 @@ export const ExecutionGraph: React.FC<ExecutionGraphProps> = ({
 
   return (
     <div 
-      className="relative flex-1 h-full bg-[#050505] canvas-grid overflow-hidden select-none flex flex-col"
+      className="studio-canvas relative flex-1 h-full bg-[#050505] canvas-grid overflow-hidden select-none flex flex-col"
       ref={containerRef}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
@@ -406,7 +406,7 @@ export const ExecutionGraph: React.FC<ExecutionGraphProps> = ({
       </div>
 
       {/* Bottom Hotspots & Profiler Summary Strip (Bloomberg Terminal style) */}
-      <div className="mt-auto z-10 bg-[#090A0B]/95 backdrop-blur border-t border-white/[0.06] px-4 py-2 flex flex-wrap items-center justify-between gap-4">
+      <div className="studio-summary studio-summary-strip mt-auto z-10 bg-[#090A0B]/95 backdrop-blur border-t border-white/[0.06] px-4 py-2 flex flex-wrap items-center justify-between gap-4">
         {/* Hotspots Breakdown */}
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5 text-xs font-mono text-[#5C6268] shrink-0">

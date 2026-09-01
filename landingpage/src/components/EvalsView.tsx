@@ -27,7 +27,7 @@ export const EvalsView: React.FC<EvalsViewProps> = ({ project }) => {
   });
 
   return (
-    <div className="flex-1 h-full bg-[#050505] p-4 md:p-6 overflow-y-auto select-none flex flex-col md:flex-row gap-4 font-mono text-xs">
+    <div className="studio-view flex-1 h-full bg-[#050505] p-4 md:p-6 overflow-y-auto select-none flex flex-col md:flex-row gap-4 font-mono text-xs">
       {/* Left: Eval Cases List */}
       <div className="flex-1 flex flex-col space-y-3">
         {/* Header Summary */}

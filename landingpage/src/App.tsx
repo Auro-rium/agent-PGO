@@ -356,7 +356,7 @@ export default function App() {
 
   // Render Full Interactive Studio Workspace
   return (
-    <div className="flex h-screen w-screen bg-[#050505] text-[#D6D9DC] overflow-hidden font-sans select-none relative">
+    <div className="studio-shell flex h-screen w-screen bg-[#050505] text-[#D6D9DC] overflow-hidden font-sans select-none relative">
       {/* 1. Slim Left Navigation Rail */}
       <NavigationRail
         currentView={currentView}

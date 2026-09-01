@@ -60,7 +60,7 @@ export const OptimizationFrontier: React.FC<OptimizationFrontierProps> = ({
   }, '');
 
   return (
-    <div className="flex-1 h-full bg-[#050505] flex flex-col md:flex-row overflow-hidden select-none font-mono text-xs">
+    <div className="studio-view studio-frontier flex-1 h-full bg-[#050505] flex flex-col md:flex-row overflow-hidden select-none font-mono text-xs">
       {/* Left Canvas: Pareto Scatter Plot */}
       <div className="flex-1 flex flex-col p-4 md:p-6 overflow-y-auto">
         {/* Header HUD */}

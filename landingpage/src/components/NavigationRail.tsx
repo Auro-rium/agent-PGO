@@ -67,7 +67,7 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
   ];
 
   return (
-    <aside className="w-13 shrink-0 bg-[#090A0B] border-r border-white/[0.06] flex flex-col items-center justify-between py-3 z-30 select-none">
+    <aside className="studio-rail w-13 shrink-0 bg-[#090A0B] border-r border-white/[0.06] flex flex-col items-center justify-between py-3 z-30 select-none">
       {/* Top Logo */}
       <div className="flex flex-col items-center gap-3">
         <button

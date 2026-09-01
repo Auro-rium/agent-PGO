@@ -89,3 +89,123 @@
 }
 
 
+
+
+/* Studio polish: more air, quieter chrome, same information architecture. */
+.studio-shell {
+  --studio-rail-width: 4.25rem;
+  --studio-topbar-height: 3.75rem;
+  background: #040506;
+}
+
+.studio-shell .studio-rail {
+  width: var(--studio-rail-width);
+  padding-top: 1.25rem;
+  padding-bottom: 1.25rem;
+  background: linear-gradient(180deg, #0b0d0f 0%, #080a0b 100%);
+  border-right-color: rgba(255, 255, 255, 0.09);
+}
+
+.studio-shell .studio-rail nav {
+  gap: 0.5rem;
+}
+
+.studio-shell .studio-rail nav button {
+  width: 2.9rem;
+  min-height: 3.25rem;
+  padding-top: 0.65rem;
+  padding-bottom: 0.65rem;
+}
+
+.studio-shell .studio-rail nav button span {
+  font-size: 9px;
+  letter-spacing: 0.01em;
+}
+
+.studio-shell .studio-topbar {
+  height: var(--studio-topbar-height);
+  padding-inline: 1.5rem;
+  background: rgba(11, 13, 15, 0.96);
+  border-bottom-color: rgba(255, 255, 255, 0.09);
+}
+
+.studio-shell .studio-topbar > div:first-child {
+  gap: 1rem;
+}
+
+.studio-shell .studio-view-tabs {
+  gap: 0.15rem;
+  padding: 0.25rem;
+  border-color: rgba(255, 255, 255, 0.09);
+}
+
+.studio-shell .studio-view-tabs button {
+  padding: 0.45rem 0.85rem;
+}
+
+.studio-shell .studio-canvas {
+  background-size: 24px 24px;
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.032) 1px, transparent 1px);
+}
+
+.studio-shell .studio-canvas > div:first-child {
+  top: 1.25rem;
+  left: 1.5rem;
+}
+
+.studio-shell .studio-canvas > div:nth-of-type(2) {
+  top: 1.25rem;
+  right: 1.5rem;
+}
+
+.studio-shell .studio-summary-strip {
+  padding: 0.9rem 1.5rem;
+  gap: 1.25rem;
+  background: rgba(10, 12, 14, 0.96);
+  border-top-color: rgba(255, 255, 255, 0.09);
+}
+
+.studio-shell .studio-summary-strip > div:last-child {
+  gap: 1.25rem;
+}
+
+.studio-shell .studio-inspector {
+  width: 22rem;
+  background: linear-gradient(180deg, #0b0d0f 0%, #090b0c 100%);
+  border-left-color: rgba(255, 255, 255, 0.09);
+}
+
+.studio-shell .studio-inspector > div:first-child {
+  padding: 1.25rem;
+  background: rgba(16, 18, 20, 0.9);
+}
+
+.studio-shell .studio-inspector > div:last-child {
+  padding: 1.25rem;
+}
+
+.studio-shell .studio-view {
+  gap: 1.25rem;
+}
+
+.studio-shell .studio-view:not(.studio-frontier) {
+  padding: 1.5rem 2rem;
+}
+
+.studio-shell .studio-frontier > div:first-child {
+  padding: 1.5rem 2rem;
+}
+
+@media (max-width: 1100px) {
+  .studio-shell .studio-topbar { padding-inline: 1rem; }
+  .studio-shell .studio-view-tabs button { padding-inline: 0.6rem; }
+  .studio-shell .studio-inspector { width: 20rem; }
+}
+
+@media (max-width: 860px) {
+  .studio-shell .studio-rail { width: 3.75rem; }
+  .studio-shell .studio-topbar { height: 3.5rem; }
+  .studio-shell .studio-view:not(.studio-frontier),
+  .studio-shell .studio-frontier > div:first-child { padding: 1rem; }
+  .studio-shell .studio-summary-strip { padding-inline: 1rem; }
+}

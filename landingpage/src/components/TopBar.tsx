@@ -37,7 +37,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   const [isAgentMenuOpen, setIsAgentMenuOpen] = useState(false);
 
   return (
-    <header className="h-11 bg-[#090A0B] border-b border-white/[0.06] px-4 flex items-center justify-between select-none z-20 shrink-0">
+    <header className="studio-topbar h-11 bg-[#090A0B] border-b border-white/[0.06] px-4 flex items-center justify-between select-none z-20 shrink-0">
       {/* Left: Project selector & Context */}
       <div className="flex items-center gap-3">
         {/* Agent Switcher Dropdown */}
@@ -102,7 +102,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       </div>
 
       {/* Center: View Switcher */}
-      <div className="hidden md:flex items-center bg-[#050505] p-0.5 rounded border border-white/[0.06]">
+      <div className="studio-view-tabs hidden md:flex items-center bg-[#050505] p-0.5 rounded border border-white/[0.06]">
         <button
           id="viewtab-graph"
           onClick={() => onViewChange('graph')}

@@ -24,7 +24,7 @@ export const OptimizerTrace: React.FC<OptimizerTraceProps> = ({ events, project 
   });
 
   return (
-    <div className="flex-1 h-full bg-[#050505] p-4 md:p-6 overflow-y-auto select-none flex flex-col space-y-4 font-mono text-xs">
+    <div className="studio-view flex-1 h-full bg-[#050505] p-4 md:p-6 overflow-y-auto select-none flex flex-col space-y-4 font-mono text-xs">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4 bg-[#090A0B] border border-white/[0.06] rounded-lg p-4">
         <div>
