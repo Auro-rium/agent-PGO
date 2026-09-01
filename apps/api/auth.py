@@ -1,12 +1,22 @@
-"""API-key issuance and request authentication helpers."""
+"""API-key and explicitly non-production demo authentication helpers.
+
+The demo credential intentionally uses a small, dependency-free signed token
+format. It is useful for exercising the browser/API integration before real
+user sessions exist, but it is gated out of production by configuration.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import hmac
+import base64
+import json
+import os
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from time import time
+from typing import Any
 
 from fastapi import Header, HTTPException, Request
 from sqlalchemy import select
@@ -37,6 +47,126 @@ class Tenant:
     api_key_id: str
 
 
+DEMO_TOKEN_PREFIX = "agp_demo"
+_revoked_demo_jtis: set[str] = set()
+
+
+def _b64encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+def _b64decode(value: str) -> bytes:
+    if not value or len(value) > 8192:
+        raise ValueError("invalid demo token segment")
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+def _configured_demo_secret() -> str | None:
+    secret = os.getenv("DEMO_AUTH_SECRET")
+    return secret.strip() if secret and secret.strip() else None
+
+
+def _configured_demo_tenant() -> tuple[str | None, str | None]:
+    organization_id = os.getenv("DEMO_AUTH_ORGANIZATION_ID") or os.getenv("DEMO_AUTH_ORG_ID")
+    project_id = os.getenv("DEMO_AUTH_PROJECT_ID")
+    return (organization_id.strip() if organization_id else None, project_id.strip() if project_id else None)
+
+
+def _demo_enabled() -> bool:
+    return (
+        os.getenv("APP_ENV", "development").strip().lower() != "production"
+        and os.getenv("DEMO_AUTH_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+    )
+
+
+def issue_demo_token(
+    *,
+    organization_id: str,
+    project_id: str | None = None,
+    subject: str = "demo-user",
+    expires_in_seconds: int = 3600,
+    secret: str | None = None,
+    jti: str | None = None,
+) -> str:
+    """Issue a signed demo bearer token for local/staging integration tests."""
+    signing_secret = secret or _configured_demo_secret()
+    if not signing_secret:
+        raise ValueError("DEMO_AUTH_SECRET is required")
+    if expires_in_seconds <= 0:
+        raise ValueError("expires_in_seconds must be positive")
+    now = int(time())
+    payload: dict[str, Any] = {
+        "sub": subject,
+        "org_id": organization_id,
+        "project_id": project_id,
+        "iat": now,
+        "exp": now + expires_in_seconds,
+        "jti": jti or secrets.token_urlsafe(16),
+    }
+    encoded_payload = _b64encode(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    signing_input = f"{DEMO_TOKEN_PREFIX}.{encoded_payload}".encode("ascii")
+    signature = _b64encode(hmac.new(signing_secret.encode("utf-8"), signing_input, hashlib.sha256).digest())
+    return f"{DEMO_TOKEN_PREFIX}.{encoded_payload}.{signature}"
+
+
+def _demo_claims(token: str) -> dict[str, Any] | None:
+    try:
+        prefix, encoded_payload, encoded_signature = token.split(".", 2)
+        if prefix != DEMO_TOKEN_PREFIX or not encoded_payload or not encoded_signature:
+            return None
+        signing_secret = _configured_demo_secret()
+        if not signing_secret:
+            return None
+        expected = hmac.new(
+            signing_secret.encode("utf-8"),
+            f"{prefix}.{encoded_payload}".encode("ascii"),
+            hashlib.sha256,
+        ).digest()
+        actual = _b64decode(encoded_signature)
+        if not hmac.compare_digest(expected, actual):
+            return None
+        claims = json.loads(_b64decode(encoded_payload).decode("utf-8"))
+        if not isinstance(claims, dict):
+            return None
+        exp = claims.get("exp")
+        jti = claims.get("jti")
+        if (
+            not isinstance(exp, (int, float))
+            or exp <= time()
+            or not isinstance(jti, str)
+            or not jti
+            or jti in _revoked_demo_jtis
+        ):
+            return None
+        return claims
+    except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError, base64.binascii.Error):
+        return None
+
+
+def revoke_demo_jti(jti: str) -> None:
+    """Revoke a demo token identifier for the lifetime of this process."""
+    if jti:
+        _revoked_demo_jtis.add(jti)
+
+
+def revoke_demo_token(token: str) -> bool:
+    """Revoke a valid token, returning whether it contained a usable JTI."""
+    claims = _demo_claims(token)
+    if claims is None:
+        return False
+    revoke_demo_jti(str(claims["jti"]))
+    return True
+
+
+def _is_bearer(authorization: str | None) -> str | None:
+    if not authorization:
+        return None
+    scheme, _, value = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not value.strip():
+        return None
+    return value.strip()
+
+
 def _extract_key(request: Request, authorization: str | None, x_api_key: str | None) -> str:
     candidate = x_api_key or request.headers.get("X-AgentPGO-API-Key")
     if candidate:
@@ -54,6 +184,26 @@ def authenticate(
     authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None),
 ) -> Tenant:
+    bearer = _is_bearer(authorization)
+    if bearer and bearer.startswith(f"{DEMO_TOKEN_PREFIX}."):
+        # Demo auth is intentionally impossible to enable in production. A
+        # signed token also cannot choose a different tenant than configured.
+        if not _demo_enabled():
+            raise HTTPException(status_code=401, detail="Invalid demo token", headers={"WWW-Authenticate": "Bearer"})
+        claims = _demo_claims(bearer)
+        configured_org, configured_project = _configured_demo_tenant()
+        if (
+            claims is None
+            or not configured_org
+            or claims.get("org_id") != configured_org
+            or claims.get("project_id") != configured_project
+        ):
+            raise HTTPException(status_code=401, detail="Invalid demo token", headers={"WWW-Authenticate": "Bearer"})
+        return Tenant(
+            organization_id=configured_org,
+            project_id=configured_project,
+            api_key_id=f"demo:{claims['jti']}",
+        )
     secret = _extract_key(request, authorization, x_api_key)
     if len(secret) > 512:
         raise HTTPException(status_code=401, detail="Invalid API key")

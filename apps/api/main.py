@@ -10,6 +10,8 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -31,8 +33,51 @@ MAX_EVAL_CASES = 1_000
 MAX_EVAL_GRADERS = 64
 MAX_CONFIG_CANDIDATES = 256
 MAX_CONFIG_BYTES = 256 * 1024
+DEFAULT_APP_ORIGIN = "https://2syexxoronpapxxxhzu6grgi4a0limkr.lambda-url.us-east-1.on.aws"
 CONTENT_KEY = re.compile(r"(?:^|[._-])(prompt|input|completion|output|content|message|messages|secret|password|authorization|api[-_]?key)(?:$|[._-])", re.I)
 REDACTED = "[REDACTED]"
+
+
+def _request_id(request: Request) -> str:
+    """Return a bounded, log-safe request ID, preserving client correlation."""
+    supplied = request.headers.get("x-request-id", "").strip()
+    if supplied and len(supplied) <= 128 and re.fullmatch(r"[A-Za-z0-9._:-]+", supplied):
+        return supplied
+    return f"req_{uuid4().hex}"
+
+
+def _error_code(status_code: int) -> str:
+    return {
+        400: "BAD_REQUEST",
+        401: "UNAUTHORIZED",
+        403: "FORBIDDEN",
+        404: "NOT_FOUND",
+        409: "CONFLICT",
+        413: "PAYLOAD_TOO_LARGE",
+        415: "UNSUPPORTED_MEDIA_TYPE",
+        422: "VALIDATION_ERROR",
+        429: "RATE_LIMITED",
+        500: "INTERNAL_SERVER_ERROR",
+        503: "SERVICE_UNAVAILABLE",
+    }.get(status_code, "REQUEST_FAILED")
+
+
+def _error_response(request: Request, status_code: int, message: str, *, fields: dict[str, Any] | None = None, headers: dict[str, str] | None = None) -> JSONResponse:
+    request_id = getattr(request.state, "request_id", None) or _request_id(request)
+    body = {
+        "error": {
+            "code": _error_code(status_code),
+            "message": message,
+            "requestId": request_id,
+            "fields": fields or {},
+        },
+        # Kept as a read-only compatibility field for existing SDK callers.
+        # New clients should consume the stable `error` envelope above.
+        "detail": message,
+    }
+    response = JSONResponse(body, status_code=status_code, headers=headers)
+    response.headers["x-request-id"] = request_id
+    return response
 
 
 class ProjectCreate(BaseModel):
@@ -207,31 +252,100 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
     factory = session_factory or create_session_factory(database_url)
     get_tenant, get_session = _tenant_dependency(factory)
     app = FastAPI(title="AgentPGO API", version="1.0.0")
+    configured_origin = os.getenv("APP_ORIGIN")
+    if not configured_origin and os.getenv("APP_ENV", "development").strip().lower() != "production":
+        configured_origin = DEFAULT_APP_ORIGIN
+    # Never use a wildcard origin with credentials. An empty production
+    # origin intentionally means browser requests are denied until deployment
+    # supplies the real HTTPS frontend origin.
+    allowed_origins = [configured_origin.rstrip("/")] if configured_origin and configured_origin.strip() else []
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-AgentPGO-API-Key", "X-AgentPGO-Project-ID", "X-Request-ID", "Idempotency-Key"],
+        expose_headers=["x-request-id"],
+    )
     app.state.session_factory = factory
     app.state.queue_publisher = queue_publisher
     if app.state.queue_publisher is None and os.getenv("SQS_QUEUE_URL"):
         app.state.queue_publisher = SQSQueuePublisher(os.environ["SQS_QUEUE_URL"])
 
     @app.middleware("http")
-    async def limit_request_size(request: Request, call_next):
+    async def request_context(request: Request, call_next):
+        request.state.request_id = _request_id(request)
+        # The /api/v1 aliases are registered as real routes below. Keep the
+        # original path available for future diagnostics without rewriting the
+        # request scope (BaseHTTPMiddleware routes from its original scope).
         if request.method in {"POST", "PUT", "PATCH"}:
             raw_length = request.headers.get("content-length")
             try:
                 if raw_length and int(raw_length) > MAX_REQUEST_BYTES:
-                    return JSONResponse({"detail": "request body exceeds maximum size"}, status_code=413)
+                    return _error_response(request, 413, "Request body exceeds maximum size.")
             except ValueError:
-                return JSONResponse({"detail": "invalid content length"}, status_code=400)
-        return await call_next(request)
+                return _error_response(request, 400, "Invalid content length.")
+        response = await call_next(request)
+        response.headers["x-request-id"] = request.state.request_id
+        return response
+
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(request: Request, exc: HTTPException):
+        detail = exc.detail
+        fields: dict[str, Any] = {}
+        if isinstance(detail, dict):
+            message = str(detail.get("message", "Request failed."))
+            if isinstance(detail.get("fields"), dict):
+                fields = detail["fields"]
+        elif isinstance(detail, list):
+            message = "Request validation failed."
+            fields = {str(index): str(item) for index, item in enumerate(detail)}
+        else:
+            message = str(detail) if detail else "Request failed."
+        return _error_response(request, exc.status_code, message, fields=fields, headers=exc.headers)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(request: Request, exc: RequestValidationError):
+        fields: dict[str, str] = {}
+        for item in exc.errors():
+            location = ".".join(str(part) for part in item.get("loc", ()) if part != "body") or "request"
+            fields[location] = str(item.get("type", "invalid"))
+        return _error_response(request, 422, "Request validation failed.", fields=fields)
+
+    @app.exception_handler(Exception)
+    async def internal_exception_handler(request: Request, exc: Exception):
+        # Do not expose provider/database details or stack traces to clients.
+        return _error_response(request, 500, "Internal server error.")
 
     @app.get("/health", tags=["system"])
+    @app.get("/v1/health", include_in_schema=False, tags=["system"])
     def health() -> dict[str, str]: return {"status": "ok"}
 
     @app.get("/ready", tags=["system"])
+    @app.get("/v1/ready", include_in_schema=False, tags=["system"])
     def ready() -> dict[str, str]:
         try:
             with factory() as session: session.execute(select(1))
         except Exception as exc: raise HTTPException(status_code=503, detail="database is not ready") from exc
         return {"status": "ready"}
+
+    @app.get("/v1/me", tags=["auth"])
+    def current_identity(tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        organization = session.get(Organization, tenant.organization_id)
+        if organization is None:
+            raise HTTPException(status_code=401, detail="Organization no longer exists")
+        project = session.get(Project, tenant.project_id) if tenant.project_id else None
+        if tenant.project_id and project is None:
+            raise HTTPException(status_code=401, detail="Project no longer exists")
+        result: dict[str, Any] = {
+            "id": tenant.api_key_id,
+            "organizationId": organization.id,
+            "organizationName": organization.name,
+            "projectId": project.id if project else None,
+            "projectName": project.name if project else None,
+            "authType": "demo" if tenant.api_key_id.startswith("demo:") else "api_key",
+        }
+        return result
 
     @app.get("/v1/organizations/me", tags=["organizations"])
     def current_organization(tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
@@ -392,6 +506,34 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
         if payload.get("run_id"):
             result.update(_persisted_export(project.id, payload["run_id"], tenant, session))
         return result
+
+    # Register browser-facing aliases after the canonical /v1 routes have been
+    # declared. Cloning APIRoute metadata preserves response models,
+    # dependencies (including JSON/content validation), and auth behavior.
+    from fastapi.routing import APIRoute
+
+    for route in list(app.routes):
+        if not isinstance(route, APIRoute) or not route.path.startswith("/v1"):
+            continue
+        alias = "/api" + route.path
+        app.add_api_route(
+            alias,
+            route.endpoint,
+            methods=sorted(route.methods or set()),
+            response_model=route.response_model,
+            status_code=route.status_code,
+            response_class=route.response_class,
+            response_model_include=route.response_model_include,
+            response_model_exclude=route.response_model_exclude,
+            response_model_by_alias=route.response_model_by_alias,
+            response_model_exclude_unset=route.response_model_exclude_unset,
+            response_model_exclude_defaults=route.response_model_exclude_defaults,
+            response_model_exclude_none=route.response_model_exclude_none,
+            tags=route.tags,
+            dependencies=route.dependencies,
+            include_in_schema=False,
+            name=f"{route.name}_api_v1",
+        )
 
     return app
 
