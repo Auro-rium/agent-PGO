@@ -96,6 +96,20 @@ def test_cors_allows_only_configured_frontend_origin(foundation_client):
     assert "access-control-allow-origin" not in denied.headers
 
 
+def test_wildcard_app_origin_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("APP_ORIGIN", "*")
+    factory = create_session_factory(f"sqlite:///{tmp_path / 'wildcard.db'}")
+    create_tables(factory)
+    app = create_app(session_factory=factory)
+    client = TestClient(app)
+    response = client.options(
+        "/api/v1/health",
+        headers={"Origin": "https://attacker.invalid", "Access-Control-Request-Method": "GET"},
+    )
+    assert "access-control-allow-origin" not in response.headers
+
+
 def test_demo_token_maps_to_configured_tenant(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch, demo=True)
     with client:
@@ -146,4 +160,3 @@ def test_expired_and_revoked_demo_tokens_are_rejected(tmp_path, monkeypatch):
         assert revoke_demo_token(fresh) is True
         revoked = client.get("/api/v1/me", headers={"authorization": f"Bearer {fresh}"})
         assert revoked.status_code == 401
-

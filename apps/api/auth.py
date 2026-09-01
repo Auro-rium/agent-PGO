@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import base64
 import json
+import math
 import os
 import secrets
 from dataclasses import dataclass
@@ -132,6 +133,7 @@ def _demo_claims(token: str) -> dict[str, Any] | None:
         jti = claims.get("jti")
         if (
             not isinstance(exp, (int, float))
+            or not math.isfinite(float(exp))
             or exp <= time()
             or not isinstance(jti, str)
             or not jti

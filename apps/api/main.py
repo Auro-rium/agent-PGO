@@ -258,7 +258,10 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
     # Never use a wildcard origin with credentials. An empty production
     # origin intentionally means browser requests are denied until deployment
     # supplies the real HTTPS frontend origin.
-    allowed_origins = [configured_origin.rstrip("/")] if configured_origin and configured_origin.strip() else []
+    normalized_origin = configured_origin.strip().rstrip("/") if configured_origin else ""
+    # Credentialed CORS with `*` is unsafe and rejected rather than silently
+    # producing a browser policy that exposes authenticated responses.
+    allowed_origins = [] if normalized_origin in {"", "*"} else [normalized_origin]
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
