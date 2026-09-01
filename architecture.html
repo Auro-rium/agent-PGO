@@ -116,11 +116,11 @@
         participant DB as PostgreSQL
         participant Prof as Profiler
         Agent->>SDK: node + model + operation
-        SDK->>SDK: sanitize metadata; no content by default
-        SDK->>API: OTLP JSON batch + API key
-        API->>API: authenticate org/project; bounds; redact
+        SDK->>SDK: sanitize metadata, no content by default
+        SDK->>API: OTLP JSON batch plus API key
+        API->>API: authenticate org/project, bounds, redact
         API->>DB: insert trace/span if identity is new
-        DB-->>API: accepted / duplicate
+        DB-->>API: accepted or duplicate
         API-->>SDK: accepted count
         Prof->>DB: aggregate runs, calls, tokens, latency, cost
         Prof-->>Agent: profile snapshot via API
@@ -217,13 +217,13 @@ constraints:
         participant W as Worker
         participant DB as PostgreSQL
         participant P as Provider
-        Q->>W: receive job_id; visibility timeout starts
+        Q->>W: receive job_id, visibility timeout starts
         W->>DB: claim queued/expired job with lease token
         W->>DB: reserve estimated spend FOR UPDATE
         W->>P: execute candidate with bounded provider policy
-        W->>DB: record candidate result + usage + cost + checkpoint
-        W->>DB: release reservation; persist aggregate
-        W->>DB: persist OptimizationResult and transition completed
+        W->>DB: record candidate result, usage, cost, checkpoint
+        W->>DB: release reservation, persist aggregate
+        W->>DB: persist OptimizationResult, transition completed
         W->>Q: acknowledge only after durable completion
         Note over W,Q: heartbeat renews DB lease and SQS visibility during long calls
         Note over P,DB: provider idempotency is required for true exactly-once billing
@@ -235,9 +235,9 @@ constraints:
       <h2>7. AWS deployment topology</h2>
       <p>The current testing deployment uses one ECS Fargate API service and one worker service, fronted by an ALB. RDS is private; S3 and SQS are IAM-controlled. The current ALB is temporary HTTP because no user-owned domain/ACM certificate was available at deployment time.</p>
       <div class="diagram"><div class="mermaid">flowchart TB
-        Internet((Internet)) --> ALB[Application Load Balancer\ncurrent test: HTTP]
-        ALB --> API[ECS Fargate API\nFastAPI :8000]
-        API --> RDS[(RDS PostgreSQL\nprivate, encrypted)]
+        Internet((Internet)) --> ALB[Application Load Balancer<br/>current test: HTTP]
+        ALB --> API[ECS Fargate API<br/>FastAPI :8000]
+        API --> RDS[(RDS PostgreSQL<br/>private, encrypted)]
         API --> SQS[SQS jobs]
         API --> S3[(Private S3 artifacts)]
         API --> SM[Secrets Manager + KMS]
@@ -275,11 +275,11 @@ constraints:
     <section id="operations">
       <h2>9. Operational lifecycle</h2>
       <div class="diagram"><div class="mermaid">flowchart LR
-        Dev[Git push] --> CI[GitHub Actions\npytest + TS + migrations + Terraform + Docker]
+        Dev[Git push] --> CI["GitHub Actions<br/>pytest + TS + migrations + Terraform + Docker"]
         CI --> ECR[ECR image :git-sha]
         ECR --> Mig[ECS one-off migration task]
         Mig --> Deploy[Update API + worker services]
-        Deploy --> Smoke[/health + /ready + auth smoke]
+        Deploy --> Smoke["health + ready + auth smoke"]
         Smoke --> Observe[CloudWatch + queue/DLQ alarms]
         Observe --> Repair[bounded retry / rollback / manual investigation]
       </div></div>
