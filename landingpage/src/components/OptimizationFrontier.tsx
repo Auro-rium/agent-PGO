@@ -8,8 +8,8 @@ import {
 
 interface OptimizationFrontierProps {
   candidates: OptimizationCandidate[];
-  selectedCandidateId: number;
-  onSelectCandidate: (candidateId: number) => void;
+  selectedCandidateId: string;
+  onSelectCandidate: (candidateId: string) => void;
   onApplyCandidateToGraph: (candidate: OptimizationCandidate) => void;
   project: AgentProject;
 }
@@ -558,4 +558,3 @@ export const OptimizationFrontier: React.FC<OptimizationFrontierProps> = ({
     </div>
   );
 };
-

@@ -31,7 +31,7 @@ export interface AgentNode {
   costSharePct: number; // e.g. 37.4%
   qualitySensitivity: NodeQualitySensitivity;
   isHotspot: boolean;
-  promptTemplate: string;
+  promptTemplate?: string;
   candidates: CandidateSubstitution[];
   // Testing state during optimization
   testingState?: {
@@ -54,7 +54,7 @@ export interface GraphEdge {
 }
 
 export interface OptimizationCandidate {
-  id: number;
+  id: string;
   name: string;
   costPerReq: number;
   qualityPct: number;
@@ -89,7 +89,7 @@ export interface OptimizerEvent {
 export interface EvalCase {
   id: string;
   category: string;
-  prompt: string;
+  prompt?: string;
   baselineScore: number;
   optimizedScore: number;
   baselineLatencyMs: number;

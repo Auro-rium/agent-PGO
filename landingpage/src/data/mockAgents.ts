@@ -296,7 +296,7 @@ export const RESEARCH_PROJECT: AgentProject = {
 // 42 Tested configurations for the Optimization Frontier
 export const CANDIDATE_CONFIGS: OptimizationCandidate[] = [
   {
-    id: 1,
+    id: '1',
     name: 'Candidate #01 (Baseline)',
     costPerReq: 0.382,
     qualityPct: 92.4,
@@ -310,7 +310,7 @@ export const CANDIDATE_CONFIGS: OptimizationCandidate[] = [
     evalCount: 120
   },
   {
-    id: 5,
+    id: '5',
     name: 'Candidate #05 (Aggressive Budget)',
     costPerReq: 0.089,
     qualityPct: 89.2,
@@ -324,7 +324,7 @@ export const CANDIDATE_CONFIGS: OptimizationCandidate[] = [
     evalCount: 120
   },
   {
-    id: 12,
+    id: '12',
     name: 'Candidate #12',
     costPerReq: 0.104,
     qualityPct: 90.1,
@@ -337,7 +337,7 @@ export const CANDIDATE_CONFIGS: OptimizationCandidate[] = [
     evalCount: 120
   },
   {
-    id: 18,
+    id: '18',
     name: 'Candidate #18',
     costPerReq: 0.118,
     qualityPct: 91.2,
@@ -350,7 +350,7 @@ export const CANDIDATE_CONFIGS: OptimizationCandidate[] = [
     evalCount: 120
   },
   {
-    id: 26,
+    id: '26',
     name: 'Candidate #26',
     costPerReq: 0.129,
     qualityPct: 91.9,
@@ -363,7 +363,7 @@ export const CANDIDATE_CONFIGS: OptimizationCandidate[] = [
     evalCount: 120
   },
   {
-    id: 42,
+    id: '42',
     name: 'Candidate #42 (Balanced Optimizer Target)',
     costPerReq: 0.141,
     qualityPct: 92.7,
@@ -377,7 +377,7 @@ export const CANDIDATE_CONFIGS: OptimizationCandidate[] = [
     evalCount: 120
   },
   {
-    id: 47,
+    id: '47',
     name: 'Candidate #47',
     costPerReq: 0.198,
     qualityPct: 92.9,
@@ -390,7 +390,7 @@ export const CANDIDATE_CONFIGS: OptimizationCandidate[] = [
     evalCount: 120
   },
   {
-    id: 52,
+    id: '52',
     name: 'Candidate #52',
     costPerReq: 0.245,
     qualityPct: 93.1,
@@ -403,7 +403,7 @@ export const CANDIDATE_CONFIGS: OptimizationCandidate[] = [
     evalCount: 120
   },
   {
-    id: 60,
+    id: '60',
     name: 'Candidate #60 (Max Quality Ensembled)',
     costPerReq: 0.395,
     qualityPct: 93.8,
@@ -417,17 +417,17 @@ export const CANDIDATE_CONFIGS: OptimizationCandidate[] = [
     evalCount: 120
   },
   // Sub-optimal tested candidates for realistic Pareto scatter
-  { id: 2, name: 'Candidate #02', costPerReq: 0.354, qualityPct: 88.5, latencySec: 22.1, p95LatencySec: 24.5, savingsPct: 7.3, nodeModels: { 'node-planner': 'Terra', 'node-researcher': 'Sol', 'node-extractor': 'Sol', 'node-reasoner': 'Sol', 'node-formatter': 'Terra' }, isParetoOptimal: false, evalPassRate: 88.5, evalCount: 120 },
-  { id: 3, name: 'Candidate #03', costPerReq: 0.298, qualityPct: 86.4, latencySec: 19.8, p95LatencySec: 21.2, savingsPct: 22.0, nodeModels: { 'node-planner': 'Luna', 'node-researcher': 'Luna', 'node-extractor': 'Sol', 'node-reasoner': 'Sol', 'node-formatter': 'Luna' }, isParetoOptimal: false, evalPassRate: 86.4, evalCount: 120 },
-  { id: 7, name: 'Candidate #07', costPerReq: 0.162, qualityPct: 74.8, latencySec: 14.1, p95LatencySec: 16.0, savingsPct: 57.6, nodeModels: { 'node-planner': 'Luna', 'node-researcher': 'Flash', 'node-extractor': 'Luna', 'node-reasoner': 'Luna', 'node-formatter': 'Luna' }, isParetoOptimal: false, evalPassRate: 74.8, evalCount: 120 },
-  { id: 9, name: 'Candidate #09', costPerReq: 0.210, qualityPct: 89.4, latencySec: 17.5, p95LatencySec: 19.0, savingsPct: 45.0, nodeModels: { 'node-planner': 'Terra', 'node-researcher': 'Flash', 'node-extractor': 'Terra', 'node-reasoner': 'Terra', 'node-formatter': 'Terra' }, isParetoOptimal: false, evalPassRate: 89.4, evalCount: 120 },
-  { id: 15, name: 'Candidate #15', costPerReq: 0.174, qualityPct: 90.5, latencySec: 16.2, p95LatencySec: 18.1, savingsPct: 54.5, nodeModels: { 'node-planner': 'Sol', 'node-researcher': 'Luna', 'node-extractor': 'Luna', 'node-reasoner': 'Terra', 'node-formatter': 'Sol' }, isParetoOptimal: false, evalPassRate: 90.5, evalCount: 120 },
-  { id: 22, name: 'Candidate #22', costPerReq: 0.280, qualityPct: 91.0, latencySec: 21.0, p95LatencySec: 23.4, savingsPct: 26.7, nodeModels: { 'node-planner': 'Sol', 'node-researcher': 'Sol', 'node-extractor': 'Luna', 'node-reasoner': 'Terra', 'node-formatter': 'Sol' }, isParetoOptimal: false, evalPassRate: 91.0, evalCount: 120 },
-  { id: 31, name: 'Candidate #31', costPerReq: 0.155, qualityPct: 91.4, latencySec: 15.0, p95LatencySec: 16.8, savingsPct: 59.4, nodeModels: { 'node-planner': 'Terra', 'node-researcher': 'Flash', 'node-extractor': 'Luna', 'node-reasoner': 'Sol', 'node-formatter': 'Luna' }, isParetoOptimal: false, evalPassRate: 91.4, evalCount: 120 },
-  { id: 38, name: 'Candidate #38', costPerReq: 0.188, qualityPct: 92.1, latencySec: 17.1, p95LatencySec: 18.9, savingsPct: 50.8, nodeModels: { 'node-planner': 'Sol', 'node-researcher': 'Flash', 'node-extractor': 'Luna', 'node-reasoner': 'Sol', 'node-formatter': 'Sol' }, isParetoOptimal: false, evalPassRate: 92.1, evalCount: 120 },
-  { id: 44, name: 'Candidate #44', costPerReq: 0.224, qualityPct: 92.5, latencySec: 19.3, p95LatencySec: 21.0, savingsPct: 41.4, nodeModels: { 'node-planner': 'Sol', 'node-researcher': 'Sol', 'node-extractor': 'Luna', 'node-reasoner': 'Sol', 'node-formatter': 'Luna' }, isParetoOptimal: false, evalPassRate: 92.5, evalCount: 120 },
-  { id: 50, name: 'Candidate #50', costPerReq: 0.312, qualityPct: 92.6, latencySec: 22.8, p95LatencySec: 25.1, savingsPct: 18.3, nodeModels: { 'node-planner': 'Sol', 'node-researcher': 'Sol', 'node-extractor': 'Sol', 'node-reasoner': 'Sol', 'node-formatter': 'Luna' }, isParetoOptimal: false, evalPassRate: 92.6, evalCount: 120 },
-  { id: 55, name: 'Candidate #55', costPerReq: 0.360, qualityPct: 93.0, latencySec: 25.0, p95LatencySec: 27.2, savingsPct: 5.8, nodeModels: { 'node-planner': 'Sol+', 'node-researcher': 'Sol', 'node-extractor': 'Sol', 'node-reasoner': 'Sol', 'node-formatter': 'Sol' }, isParetoOptimal: false, evalPassRate: 93.0, evalCount: 120 }
+  { id: '2', name: 'Candidate #02', costPerReq: 0.354, qualityPct: 88.5, latencySec: 22.1, p95LatencySec: 24.5, savingsPct: 7.3, nodeModels: { 'node-planner': 'Terra', 'node-researcher': 'Sol', 'node-extractor': 'Sol', 'node-reasoner': 'Sol', 'node-formatter': 'Terra' }, isParetoOptimal: false, evalPassRate: 88.5, evalCount: 120 },
+  { id: '3', name: 'Candidate #03', costPerReq: 0.298, qualityPct: 86.4, latencySec: 19.8, p95LatencySec: 21.2, savingsPct: 22.0, nodeModels: { 'node-planner': 'Luna', 'node-researcher': 'Luna', 'node-extractor': 'Sol', 'node-reasoner': 'Sol', 'node-formatter': 'Luna' }, isParetoOptimal: false, evalPassRate: 86.4, evalCount: 120 },
+  { id: '7', name: 'Candidate #07', costPerReq: 0.162, qualityPct: 74.8, latencySec: 14.1, p95LatencySec: 16.0, savingsPct: 57.6, nodeModels: { 'node-planner': 'Luna', 'node-researcher': 'Flash', 'node-extractor': 'Luna', 'node-reasoner': 'Luna', 'node-formatter': 'Luna' }, isParetoOptimal: false, evalPassRate: 74.8, evalCount: 120 },
+  { id: '9', name: 'Candidate #09', costPerReq: 0.210, qualityPct: 89.4, latencySec: 17.5, p95LatencySec: 19.0, savingsPct: 45.0, nodeModels: { 'node-planner': 'Terra', 'node-researcher': 'Flash', 'node-extractor': 'Terra', 'node-reasoner': 'Terra', 'node-formatter': 'Terra' }, isParetoOptimal: false, evalPassRate: 89.4, evalCount: 120 },
+  { id: '15', name: 'Candidate #15', costPerReq: 0.174, qualityPct: 90.5, latencySec: 16.2, p95LatencySec: 18.1, savingsPct: 54.5, nodeModels: { 'node-planner': 'Sol', 'node-researcher': 'Luna', 'node-extractor': 'Luna', 'node-reasoner': 'Terra', 'node-formatter': 'Sol' }, isParetoOptimal: false, evalPassRate: 90.5, evalCount: 120 },
+  { id: '22', name: 'Candidate #22', costPerReq: 0.280, qualityPct: 91.0, latencySec: 21.0, p95LatencySec: 23.4, savingsPct: 26.7, nodeModels: { 'node-planner': 'Sol', 'node-researcher': 'Sol', 'node-extractor': 'Luna', 'node-reasoner': 'Terra', 'node-formatter': 'Sol' }, isParetoOptimal: false, evalPassRate: 91.0, evalCount: 120 },
+  { id: '31', name: 'Candidate #31', costPerReq: 0.155, qualityPct: 91.4, latencySec: 15.0, p95LatencySec: 16.8, savingsPct: 59.4, nodeModels: { 'node-planner': 'Terra', 'node-researcher': 'Flash', 'node-extractor': 'Luna', 'node-reasoner': 'Sol', 'node-formatter': 'Luna' }, isParetoOptimal: false, evalPassRate: 91.4, evalCount: 120 },
+  { id: '38', name: 'Candidate #38', costPerReq: 0.188, qualityPct: 92.1, latencySec: 17.1, p95LatencySec: 18.9, savingsPct: 50.8, nodeModels: { 'node-planner': 'Sol', 'node-researcher': 'Flash', 'node-extractor': 'Luna', 'node-reasoner': 'Sol', 'node-formatter': 'Sol' }, isParetoOptimal: false, evalPassRate: 92.1, evalCount: 120 },
+  { id: '44', name: 'Candidate #44', costPerReq: 0.224, qualityPct: 92.5, latencySec: 19.3, p95LatencySec: 21.0, savingsPct: 41.4, nodeModels: { 'node-planner': 'Sol', 'node-researcher': 'Sol', 'node-extractor': 'Luna', 'node-reasoner': 'Sol', 'node-formatter': 'Luna' }, isParetoOptimal: false, evalPassRate: 92.5, evalCount: 120 },
+  { id: '50', name: 'Candidate #50', costPerReq: 0.312, qualityPct: 92.6, latencySec: 22.8, p95LatencySec: 25.1, savingsPct: 18.3, nodeModels: { 'node-planner': 'Sol', 'node-researcher': 'Sol', 'node-extractor': 'Sol', 'node-reasoner': 'Sol', 'node-formatter': 'Luna' }, isParetoOptimal: false, evalPassRate: 92.6, evalCount: 120 },
+  { id: '55', name: 'Candidate #55', costPerReq: 0.360, qualityPct: 93.0, latencySec: 25.0, p95LatencySec: 27.2, savingsPct: 5.8, nodeModels: { 'node-planner': 'Sol+', 'node-researcher': 'Sol', 'node-extractor': 'Sol', 'node-reasoner': 'Sol', 'node-formatter': 'Sol' }, isParetoOptimal: false, evalPassRate: 93.0, evalCount: 120 }
 ];
 
 export const OPTIMIZER_STREAM_EVENTS: OptimizerEvent[] = [

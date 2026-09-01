@@ -1,17 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { 
-  ViewMode, 
-  AgentProject, 
-  AgentNode, 
-  OptimizationCandidate, 
-  OptimizerEvent 
-} from './types';
-import { 
-  ALL_PROJECTS, 
-  CANDIDATE_CONFIGS, 
-  OPTIMIZER_STREAM_EVENTS, 
-  RESEARCH_PROJECT 
-} from './data/mockAgents';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ViewMode, AgentProject, OptimizationCandidate, OptimizerEvent, EvalCase } from './types';
 import { NavigationRail } from './components/NavigationRail';
 import { TopBar } from './components/TopBar';
 import { ExecutionGraph } from './components/ExecutionGraph';
@@ -27,540 +15,117 @@ import { IntegrationsModal } from './components/IntegrationsModal';
 import { SettingsModal } from './components/SettingsModal';
 import { SettingsView } from './components/SettingsView';
 import { DemoSession } from './auth/demoAuth';
+import { api, ApiError } from './lib/api';
+import { subscribeToOptimization, OptimizerStream } from './lib/sse';
 
 const studioViewFromHash = (): ViewMode => {
-  const value = window.location.hash.replace(/^#studio\/?/, "").replace(/\/$/, "");
+  const value = window.location.hash.replace(/^#studio\/?/, '').replace(/\/$/, '');
   if (value === 'frontier' || value === 'diff' || value === 'timeline' || value === 'evals' || value === 'settings') return value;
   return 'graph';
 };
 
-interface AppProps {
-  session?: DemoSession;
-  onLogout?: () => void;
-  onOpenProfile?: () => void;
-}
+interface AppProps { session?: DemoSession; onLogout?: () => void; onOpenProfile?: () => void; }
 
 export default function App({ session, onLogout, onOpenProfile }: AppProps) {
-  const activeSession: DemoSession = session || { name: "TwineRun User", email: "", initials: "TR", authenticatedAt: "" };
+  const activeSession: DemoSession = session || { name: 'TwineRun User', email: '', initials: 'TR', authenticatedAt: '' };
   const [currentView, setCurrentView] = useState<ViewMode>(studioViewFromHash);
-  const [project, setProject] = useState<AgentProject>(RESEARCH_PROJECT);
+  const [projects, setProjects] = useState<AgentProject[]>([]);
+  const [project, setProject] = useState<AgentProject | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  
-  // Optimization Engine State
+  const [candidates, setCandidates] = useState<OptimizationCandidate[]>([]);
+  const [evalCases, setEvalCases] = useState<EvalCase[]>([]);
+  const [selectedCandidateId, setSelectedCandidateId] = useState<string>('');
+  const [optEvents, setOptEvents] = useState<OptimizerEvent[]>([]);
   const [isOptimizing, setIsOptimizing] = useState(false);
+  const [optimizationStatus, setOptimizationStatus] = useState('');
   const [isOptModalOpen, setIsOptModalOpen] = useState(false);
-  const [optEvents, setOptEvents] = useState<OptimizerEvent[]>(OPTIMIZER_STREAM_EVENTS);
-  const [optStepIndex, setOptStepIndex] = useState(14);
   const [activeTestingNodeId, setActiveTestingNodeId] = useState<string | null>(null);
-  const [testingStatus, setTestingStatus] = useState<{
-    status: 'TESTING' | 'PASS' | 'REJECT';
-    nodeName: string;
-    fromModel: string;
-    toModel: string;
-    costChange?: string;
-    qualityChange?: string;
-  } | null>(null);
-
-  // Candidates & Selection State
-  const [selectedCandidateId, setSelectedCandidateId] = useState<number>(42);
-  
-  // Modals
+  const [testingStatus, setTestingStatus] = useState<{ status: 'TESTING' | 'PASS' | 'REJECT'; nodeName: string; fromModel: string; toModel: string; costChange?: string; qualityChange?: string } | null>(null);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isIntegrationsModalOpen, setIsIntegrationsModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-  const optimizationTimerRef = useRef<number | null>(null);
+  const [error, setError] = useState('');
+  const streamRef = useRef<OptimizerStream | null>(null);
 
-  useEffect(() => () => {
-    if (optimizationTimerRef.current !== null) {
-      window.clearTimeout(optimizationTimerRef.current);
-      optimizationTimerRef.current = null;
-    }
+  const loadProjects = useCallback(async () => {
+    try {
+      const list = await api.projects();
+      setProjects(list);
+      setProject((current) => current && list.some((item) => item.id === current.id) ? current : list[0] || null);
+      setError(list.length ? '' : 'No persisted projects are available for this workspace yet.');
+    } catch (cause) { setError(cause instanceof ApiError ? cause.message : 'Unable to load projects from the backend.'); }
   }, []);
 
-  // Selected node object
-  const selectedNode = project.nodes.find((n) => n.id === selectedNodeId) || null;
+  useEffect(() => { void loadProjects(); return () => streamRef.current?.close(); }, [loadProjects]);
+  useEffect(() => {
+    if (!project) return;
+    setSelectedNodeId(null);
+    setCandidates([]); setEvalCases([]); setOptEvents([]); setSelectedCandidateId('');
+    if (project.runId) { void api.candidates(project.runId).then(setCandidates).catch(() => undefined); void api.evalCases(project.runId).then(setEvalCases).catch(() => undefined); }
+  }, [project?.id, project?.runId]);
+  useEffect(() => { const handle = () => setCurrentView(studioViewFromHash()); window.addEventListener('hashchange', handle); return () => window.removeEventListener('hashchange', handle); }, []);
+  useEffect(() => () => streamRef.current?.close(), []);
 
-  const handleViewChange = (view: ViewMode) => {
-    window.history.pushState({}, "", "#studio/" + view);
-    setCurrentView(view);
+  const handleViewChange = (view: ViewMode) => { window.history.pushState({}, '', '#studio/' + view); setCurrentView(view); };
+  const handleSelectProject = async (projectId: string) => {
+    try { setProject(await api.project(projectId)); } catch (cause) { setError(cause instanceof ApiError ? cause.message : 'Unable to load that project.'); }
   };
+  const handleSelectModelOverride = (nodeId: string, modelName: string) => setProject((prev) => prev ? ({ ...prev, nodes: prev.nodes.map((node) => node.id === nodeId ? { ...node, currentModel: modelName } : node) }) : prev);
 
-  useEffect(() => {
-    const handleHashChange = () => setCurrentView(studioViewFromHash());
-    window.addEventListener("hashchange", handleHashChange);
-    return () => window.removeEventListener("hashchange", handleHashChange);
-  }, []);
-
-  // Global Keyboard Shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        setIsCommandPaletteOpen((prev) => !prev);
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'r') {
-        e.preventDefault();
-        runOptimizationSimulation();
-      } else if ((e.metaKey || e.ctrlKey) && e.key === '1') {
-        e.preventDefault();
-        handleViewChange('graph');
-      } else if ((e.metaKey || e.ctrlKey) && e.key === '2') {
-        e.preventDefault();
-        handleViewChange('frontier');
-      } else if ((e.metaKey || e.ctrlKey) && e.key === '3') {
-        e.preventDefault();
-        handleViewChange('diff');
-      } else if ((e.metaKey || e.ctrlKey) && e.key === '4') {
-        e.preventDefault();
-        handleViewChange('timeline');
-      } else if ((e.metaKey || e.ctrlKey) && e.key === '5') {
-        e.preventDefault();
-        handleViewChange('evals');
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
-  // Run the live PGO optimization sequence
-  const runOptimizationSimulation = () => {
-    if (isOptimizing) return;
-    if (optimizationTimerRef.current !== null) {
-      window.clearTimeout(optimizationTimerRef.current);
-      optimizationTimerRef.current = null;
-    }
-    
-    // Reset to baseline models before starting simulation
-    setProject((prev) => ({
-      ...prev,
-      nodes: prev.nodes.map((n) => ({
-        ...n,
-        currentModel: n.baselineModel,
-        avgCost: n.baselineCost,
-        latencySec: n.baselineLatencySec
-      }))
-    }));
-
-    setIsOptimizing(true);
-    setIsOptModalOpen(true);
-    setOptEvents([OPTIMIZER_STREAM_EVENTS[0]]);
-    setOptStepIndex(1);
-
-    const steps = [
-      // Step 1: Planner
-      {
-        nodeId: 'node-planner',
-        nodeName: 'Planner',
-        from: 'Sol',
-        to: 'Luna',
-        status: 'TESTING' as const,
-        events: [OPTIMIZER_STREAM_EVENTS[1]],
-        delay: 800,
-        applyModel: false
-      },
-      {
-        nodeId: 'node-planner',
-        nodeName: 'Planner',
-        from: 'Sol',
-        to: 'Luna',
-        status: 'PASS' as const,
-        costChange: '-71.2% Cost',
-        qualityChange: '-0.1pp (Pass)',
-        events: [OPTIMIZER_STREAM_EVENTS[2]],
-        delay: 1400,
-        applyModel: true,
-        newModel: 'Luna',
-        newCost: 0.019,
-        newLatency: 1.2
-      },
-      // Step 2: Researcher
-      {
-        nodeId: 'node-researcher',
-        nodeName: 'Researcher',
-        from: 'Sol',
-        to: 'Flash',
-        status: 'TESTING' as const,
-        events: [OPTIMIZER_STREAM_EVENTS[3]],
-        delay: 800,
-        applyModel: false
-      },
-      {
-        nodeId: 'node-researcher',
-        nodeName: 'Researcher',
-        from: 'Sol',
-        to: 'Flash',
-        status: 'PASS' as const,
-        costChange: '-64.4% Cost',
-        qualityChange: '+0.2pp (Pass)',
-        events: [OPTIMIZER_STREAM_EVENTS[4]],
-        delay: 1400,
-        applyModel: true,
-        newModel: 'Flash',
-        newCost: 0.028,
-        newLatency: 3.4
-      },
-      // Step 3: Extractor
-      {
-        nodeId: 'node-extractor',
-        nodeName: 'Extractor',
-        from: 'Sol',
-        to: 'Luna',
-        status: 'TESTING' as const,
-        events: [OPTIMIZER_STREAM_EVENTS[5]],
-        delay: 800,
-        applyModel: false
-      },
-      {
-        nodeId: 'node-extractor',
-        nodeName: 'Extractor',
-        from: 'Sol',
-        to: 'Luna',
-        status: 'PASS' as const,
-        costChange: '-69.2% Cost',
-        qualityChange: '+0.1pp (Pass)',
-        events: [OPTIMIZER_STREAM_EVENTS[6]],
-        delay: 1400,
-        applyModel: true,
-        newModel: 'Luna',
-        newCost: 0.012,
-        newLatency: 1.1
-      },
-      // Step 4: Reasoner (Luna attempt -> REJECT)
-      {
-        nodeId: 'node-reasoner',
-        nodeName: 'Reasoner',
-        from: 'Sol',
-        to: 'Luna',
-        status: 'TESTING' as const,
-        events: [OPTIMIZER_STREAM_EVENTS[7]],
-        delay: 900,
-        applyModel: false
-      },
-      {
-        nodeId: 'node-reasoner',
-        nodeName: 'Reasoner',
-        from: 'Sol',
-        to: 'Luna',
-        status: 'REJECT' as const,
-        costChange: '-88.1% Cost',
-        qualityChange: '-18.4pp (REJECTED)',
-        events: [OPTIMIZER_STREAM_EVENTS[8]],
-        delay: 1400,
-        applyModel: false
-      },
-      // Step 4b: Reasoner (Terra attempt -> REJECT, KEEP SOL)
-      {
-        nodeId: 'node-reasoner',
-        nodeName: 'Reasoner',
-        from: 'Sol',
-        to: 'Terra',
-        status: 'TESTING' as const,
-        events: [OPTIMIZER_STREAM_EVENTS[9]],
-        delay: 800,
-        applyModel: false
-      },
-      {
-        nodeId: 'node-reasoner',
-        nodeName: 'Reasoner',
-        from: 'Sol',
-        to: 'Terra',
-        status: 'REJECT' as const,
-        costChange: 'KEEP SOL',
-        qualityChange: '-0.8pp (Borderline)',
-        events: [OPTIMIZER_STREAM_EVENTS[10]],
-        delay: 1400,
-        applyModel: true,
-        newModel: 'GPT-5.6 Sol',
-        newCost: 0.143,
-        newLatency: 8.4
-      },
-      // Step 5: Formatter
-      {
-        nodeId: 'node-formatter',
-        nodeName: 'Formatter',
-        from: 'Sol',
-        to: 'Luna',
-        status: 'TESTING' as const,
-        events: [OPTIMIZER_STREAM_EVENTS[11]],
-        delay: 800,
-        applyModel: false
-      },
-      {
-        nodeId: 'node-formatter',
-        nodeName: 'Formatter',
-        from: 'Sol',
-        to: 'Luna',
-        status: 'PASS' as const,
-        costChange: '-65.0% Cost',
-        qualityChange: '0.0pp (Pass)',
-        events: [OPTIMIZER_STREAM_EVENTS[12]],
-        delay: 1400,
-        applyModel: true,
-        newModel: 'Luna',
-        newCost: 0.007,
-        newLatency: 0.9
-      },
-      // Final Frontier compilation
-      {
-        nodeId: '',
-        nodeName: 'Frontier',
-        from: '',
-        to: '',
-        status: 'PASS' as const,
-        events: [OPTIMIZER_STREAM_EVENTS[13], OPTIMIZER_STREAM_EVENTS[14]],
-        delay: 1000,
-        applyModel: false
-      }
-    ];
-
-    let currentStep = 0;
-
-    const runNextStep = () => {
-      if (currentStep >= steps.length) {
-        setIsOptimizing(false);
-        setActiveTestingNodeId(null);
-        setTestingStatus(null);
-        setOptStepIndex(14);
-        return;
-      }
-
-      const step = steps[currentStep];
-      setActiveTestingNodeId(step.nodeId || null);
-      setTestingStatus({
-        status: step.status,
-        nodeName: step.nodeName,
-        fromModel: step.from,
-        toModel: step.to,
-        costChange: step.costChange,
-        qualityChange: step.qualityChange
+  const startOptimization = async () => {
+    if (!project || isOptimizing) return;
+    setError(''); setIsOptimizing(true); setIsOptModalOpen(true); setOptimizationStatus('QUEUED'); setOptEvents([]);
+    try {
+      const result = await api.startOptimization(project.id, { projectVersionId: project.version, qualityTolerancePp: project.qualityTolerancePct, confidencePct: project.confidencePct, objective: 'cost_quality', idempotencyKey: crypto.randomUUID() });
+      setOptimizationStatus(result.status); streamRef.current?.close();
+      streamRef.current = subscribeToOptimization(result.runId, (event) => {
+        setOptEvents((previous) => previous.some((item) => item.id === event.id) ? previous : [...previous, event]);
+        if (event.nodeId) setActiveTestingNodeId(event.nodeId);
+        if (event.type === 'TESTING' || event.type === 'PASS' || event.type === 'REJECT') setTestingStatus({ status: event.type === 'TESTING' ? 'TESTING' : event.type, nodeName: event.nodeName || event.nodeId || 'Node', fromModel: event.fromModel || '', toModel: event.toModel || '', costChange: event.costChangePct === undefined ? undefined : `${event.costChangePct.toFixed(1)}% cost`, qualityChange: event.qualityDeltaPp === undefined ? undefined : `${event.qualityDeltaPp >= 0 ? '+' : ''}${event.qualityDeltaPp.toFixed(1)}pp` });
+      }, () => setError('Live optimizer events disconnected; polling will continue.'), (status) => {
+        setOptimizationStatus(status); setIsOptimizing(false); setActiveTestingNodeId(null); setTestingStatus(null);
+        void api.candidates(result.runId).then(setCandidates).catch(() => undefined); void api.project(project.id).then(setProject).catch(() => undefined);
       });
-
-      setOptEvents((prev) => [...prev, ...step.events]);
-      setOptStepIndex(currentStep + 1);
-
-      if (step.applyModel && step.nodeId && step.newModel) {
-        setProject((prev) => ({
-          ...prev,
-          nodes: prev.nodes.map((n) =>
-            n.id === step.nodeId
-              ? {
-                  ...n,
-                  currentModel: step.newModel!,
-                  avgCost: step.newCost || n.avgCost,
-                  latencySec: step.newLatency || n.latencySec
-                }
-              : n
-          )
-        }));
-      }
-
-      currentStep++;
-      optimizationTimerRef.current = window.setTimeout(() => {
-        optimizationTimerRef.current = null;
-        runNextStep();
-      }, step.delay);
-    };
-
-    optimizationTimerRef.current = window.setTimeout(() => {
-      optimizationTimerRef.current = null;
-      runNextStep();
-    }, 500);
+    } catch (cause) { setIsOptimizing(false); setOptimizationStatus('FAILED'); setError(cause instanceof ApiError ? cause.message : 'Unable to start optimization.'); }
   };
 
-  // Switch Active Project
-  const handleSelectProject = (projectId: string) => {
-    const selected = ALL_PROJECTS.find((p) => p.id === projectId);
-    if (selected) {
-      setProject(selected);
-      setSelectedNodeId(null);
-    }
-  };
-
-  // Override model on a node manually
-  const handleSelectModelOverride = (nodeId: string, modelName: string) => {
-    setProject((prev) => ({
-      ...prev,
-      nodes: prev.nodes.map((n) =>
-        n.id === nodeId ? { ...n, currentModel: modelName } : n
-      )
-    }));
-  };
-
-  // Apply candidate from Pareto Frontier directly
-  const handleApplyCandidate = (candidate: OptimizationCandidate) => {
-    setProject((prev) => ({
-      ...prev,
-      nodes: prev.nodes.map((n) => ({
-        ...n,
-        currentModel: candidate.nodeModels[n.id] || n.currentModel
-      }))
-    }));
+  const selectCandidate = async (candidate: OptimizationCandidate) => {
     setSelectedCandidateId(candidate.id);
+    if (!project || !project.runId) return;
+    try { const updated = await api.selectCandidate(project.runId, candidate.id); if (updated) setProject(updated); } catch (cause) { setError(cause instanceof ApiError ? cause.message : 'Candidate selection failed.'); }
   };
+  const updateSettings = async (settings: Partial<AgentProject>) => {
+    if (!project) return;
+    setProject((prev) => prev ? { ...prev, ...settings } : prev);
+    try { await api.updateSettings(project.id, settings); } catch (cause) { setError(cause instanceof ApiError ? cause.message : 'Settings could not be saved.'); }
+  };
+  const selectedNode = project?.nodes.find((node) => node.id === selectedNodeId) || null;
+  const progress = optimizationStatus === 'QUEUED' ? 8 : optimizationStatus === 'BASELINING' ? 25 : optimizationStatus === 'SEARCHING' ? 58 : optimizationStatus === 'VERIFYING' ? 84 : optimizationStatus === 'COMPLETED' ? 100 : 0;
 
-  // Render Full Interactive Studio Workspace
-  return (
-    <div className="studio-shell flex h-screen w-screen bg-[#050505] text-[#D6D9DC] overflow-hidden font-sans select-none relative">
-      {/* 1. Slim Left Navigation Rail */}
-      <NavigationRail
-        session={activeSession}
-        onLogout={onLogout || (() => {})}
-        onOpenProfile={onOpenProfile || (() => {})}
-        currentView={currentView}
-        onViewChange={handleViewChange}
-        onOpenIntegrations={() => setIsIntegrationsModalOpen(true)}
-        onOpenSettings={() => { setIsSettingsModalOpen(false); handleViewChange("settings"); }}
-        onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
-        isOptimizing={isOptimizing}
-      />
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); setIsCommandPaletteOpen((open) => !open); } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'r') { event.preventDefault(); void startOptimization(); } };
+    window.addEventListener('keydown', handleKey); return () => window.removeEventListener('keydown', handleKey);
+  });
 
-      {/* 2. Main Workspace Layout */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden">
-        {/* Top Bar with Project Breadcrumbs, Views, and Metallic OPTIMIZE Button */}
-        <TopBar
-          project={project}
-          allProjects={ALL_PROJECTS}
-          onSelectProject={handleSelectProject}
-          currentView={currentView}
-          onViewChange={handleViewChange}
-          onRunOptimization={runOptimizationSimulation}
-          isOptimizing={isOptimizing}
-          onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
-          onOpenExport={() => setIsExportModalOpen(true)}
-          optimizationProgressPct={Math.min(100, Math.round((optStepIndex / 14) * 100))}
-        />
-
-        {/* Workspace Body: Dynamic View */}
-        <main className="flex-1 flex overflow-hidden relative">
-          {currentView === 'graph' && (
-            <>
-              {/* Primary Execution Graph (Visual Hero) */}
-              <ExecutionGraph
-                project={project}
-                selectedNodeId={selectedNodeId}
-                onSelectNode={setSelectedNodeId}
-                isOptimizing={isOptimizing}
-                onRunOptimization={runOptimizationSimulation}
-                activeTestingNodeId={activeTestingNodeId}
-                testingStatus={testingStatus}
-              />
-
-              {/* Contextual Right Inspector */}
-              <NodeInspector
-                selectedNode={selectedNode}
-                project={project}
-                onClose={() => setSelectedNodeId(null)}
-                onSelectModelOverride={handleSelectModelOverride}
-                onRunOptimization={runOptimizationSimulation}
-                isOptimizing={isOptimizing}
-              />
-            </>
-          )}
-
-          {currentView === 'frontier' && (
-            <OptimizationFrontier
-              candidates={CANDIDATE_CONFIGS}
-              selectedCandidateId={selectedCandidateId}
-              onSelectCandidate={setSelectedCandidateId}
-              onApplyCandidateToGraph={handleApplyCandidate}
-              project={project}
-            />
-          )}
-
-          {currentView === 'diff' && (
-            <BeforeAfterDiff
-              project={project}
-              onDeployOptimized={() => {
-                // Apply optimized configuration
-                setProject((prev) => ({
-                  ...prev,
-                  nodes: prev.nodes.map((n) => ({
-                    ...n,
-                    currentModel: n.optimizedModel
-                  }))
-                }));
-                handleViewChange('graph');
-              }}
-              onOpenExport={() => setIsExportModalOpen(true)}
-            />
-          )}
-
-          {currentView === 'timeline' && (
-            <OptimizerTrace
-              events={optEvents}
-              project={project}
-            />
-          )}
-
-          {currentView === 'evals' && (
-            <EvalsView
-              project={project}
-            />
-          )}
-
-          {currentView === 'settings' && (
-            <SettingsView
-              project={project}
-              onUpdateProjectSettings={(settings) => setProject((prev) => ({ ...prev, ...settings }))}
-            />
-          )}
-        </main>
-      </div>
-
-      {/* 3. Live Optimization Compilation Modal */}
-      <OptimizationModal
-        isOpen={isOptModalOpen}
-        isOptimizing={isOptimizing}
-        events={optEvents}
-        currentStepIndex={optStepIndex}
-        totalSteps={14}
-        project={project}
-        onClose={() => setIsOptModalOpen(false)}
-        onApplyAndCompare={() => {
-          setIsOptModalOpen(false);
-          handleViewChange('diff');
-        }}
-        onOpenFrontier={() => {
-          setIsOptModalOpen(false);
-          handleViewChange('frontier');
-        }}
-      />
-
-      {/* 4. Command Palette (⌘K) */}
-      <CommandPalette
-        isOpen={isCommandPaletteOpen}
-        onClose={() => setIsCommandPaletteOpen(false)}
-        onViewChange={handleViewChange}
-        onRunOptimization={runOptimizationSimulation}
-        onSelectProject={handleSelectProject}
-        onOpenExport={() => setIsExportModalOpen(true)}
-        onOpenIntegrations={() => setIsIntegrationsModalOpen(true)}
-        allProjects={ALL_PROJECTS}
-      />
-
-      {/* 5. Export Manifest Dialog */}
-      <ExportModal
-        isOpen={isExportModalOpen}
-        onClose={() => setIsExportModalOpen(false)}
-        project={project}
-      />
-
-      {/* 6. SDK Integrations Dialog */}
-      <IntegrationsModal
-        isOpen={isIntegrationsModalOpen}
-        onClose={() => setIsIntegrationsModalOpen(false)}
-      />
-
-      {/* 7. Compiler Settings Dialog */}
-      <SettingsModal
-        isOpen={isSettingsModalOpen}
-        onClose={() => setIsSettingsModalOpen(false)}
-        project={project}
-        onUpdateProjectSettings={(settings) => {
-          setProject((prev) => ({ ...prev, ...settings }));
-        }}
-      />
+  if (!project) return <div className="studio-shell flex h-screen items-center justify-center bg-[#050505] text-[#D6D9DC] font-mono text-xs"><div className="space-y-3 text-center"><div>{error || 'Loading persisted workspace…'}</div><button className="silver-btn-gradient rounded px-3 py-1 text-[#050505]" onClick={() => void loadProjects()}>Retry</button></div></div>;
+  return <div className="studio-shell flex h-screen w-screen bg-[#050505] text-[#D6D9DC] overflow-hidden font-sans select-none relative">
+    <NavigationRail session={activeSession} onLogout={onLogout || (() => {})} onOpenProfile={onOpenProfile || (() => {})} currentView={currentView} onViewChange={handleViewChange} onOpenIntegrations={() => setIsIntegrationsModalOpen(true)} onOpenSettings={() => { setIsSettingsModalOpen(false); handleViewChange('settings'); }} onOpenCommandPalette={() => setIsCommandPaletteOpen(true)} isOptimizing={isOptimizing} />
+    <div className="flex-1 flex flex-col h-full overflow-hidden"><TopBar project={project} allProjects={projects} onSelectProject={handleSelectProject} currentView={currentView} onViewChange={handleViewChange} onRunOptimization={() => void startOptimization()} isOptimizing={isOptimizing} onOpenCommandPalette={() => setIsCommandPaletteOpen(true)} onOpenExport={() => setIsExportModalOpen(true)} optimizationProgressPct={progress} />
+      {error && <div className="px-4 py-1.5 bg-[#241b1b] border-b border-white/[0.08] text-[10px] font-mono" role="alert">{error}</div>}
+      <main className="flex-1 flex overflow-hidden relative">
+        {currentView === 'graph' && <><ExecutionGraph project={project} selectedNodeId={selectedNodeId} onSelectNode={setSelectedNodeId} isOptimizing={isOptimizing} onRunOptimization={() => void startOptimization()} activeTestingNodeId={activeTestingNodeId} testingStatus={testingStatus} /><NodeInspector selectedNode={selectedNode} project={project} onClose={() => setSelectedNodeId(null)} onSelectModelOverride={handleSelectModelOverride} onRunOptimization={() => void startOptimization()} isOptimizing={isOptimizing} /></>}
+        {currentView === 'frontier' && <OptimizationFrontier candidates={candidates} selectedCandidateId={selectedCandidateId} onSelectCandidate={(id) => setSelectedCandidateId(id)} onApplyCandidateToGraph={(candidate) => void selectCandidate(candidate)} project={project} />}
+        {currentView === 'diff' && <BeforeAfterDiff project={project} onDeployOptimized={() => handleViewChange('frontier')} onOpenExport={() => setIsExportModalOpen(true)} />}
+        {currentView === 'timeline' && <OptimizerTrace events={optEvents} project={project} />}
+        {currentView === 'evals' && <EvalsView project={project} cases={evalCases} />}
+        {currentView === 'settings' && <SettingsView project={project} onUpdateProjectSettings={updateSettings} />}
+      </main>
     </div>
-  );
+    <OptimizationModal isOpen={isOptModalOpen} isOptimizing={isOptimizing} events={optEvents} currentStepIndex={optEvents.length} totalSteps={Math.max(1, optEvents.length)} project={project} onClose={() => setIsOptModalOpen(false)} onApplyAndCompare={() => { setIsOptModalOpen(false); handleViewChange('diff'); }} onOpenFrontier={() => { setIsOptModalOpen(false); handleViewChange('frontier'); }} />
+    <CommandPalette isOpen={isCommandPaletteOpen} onClose={() => setIsCommandPaletteOpen(false)} onViewChange={handleViewChange} onRunOptimization={() => void startOptimization()} onSelectProject={handleSelectProject} onOpenExport={() => setIsExportModalOpen(true)} onOpenIntegrations={() => setIsIntegrationsModalOpen(true)} allProjects={projects} />
+    <ExportModal isOpen={isExportModalOpen} onClose={() => setIsExportModalOpen(false)} project={project} onExport={() => project.runId ? api.exportRun(project.runId) : Promise.resolve()} />
+    <IntegrationsModal isOpen={isIntegrationsModalOpen} onClose={() => setIsIntegrationsModalOpen(false)} />
+    <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} project={project} onUpdateProjectSettings={updateSettings} />
+  </div>;
 }
-

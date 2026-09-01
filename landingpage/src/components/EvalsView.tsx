@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { useResizableWidth } from '../hooks/useResizableWidth';
 import { PanelResizeHandle } from './PanelResizeHandle';
 import { EvalCase, AgentProject } from '../types';
-import { MOCK_EVAL_CASES } from '../data/mockAgents';
 import { 
   ShieldCheck, 
   Search
@@ -10,19 +9,20 @@ import {
 
 interface EvalsViewProps {
   project: AgentProject;
+  cases?: EvalCase[];
 }
 
-export const EvalsView: React.FC<EvalsViewProps> = ({ project }) => {
+export const EvalsView: React.FC<EvalsViewProps> = ({ project, cases = [] }) => {
   const { width, startResize } = useResizableWidth(352, 280, 520, true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
-  const [selectedCase, setSelectedCase] = useState<EvalCase | null>(MOCK_EVAL_CASES[0]);
+  const [selectedCase, setSelectedCase] = useState<EvalCase | null>(cases[0] || null);
 
-  const categories = ['ALL', ...Array.from(new Set(MOCK_EVAL_CASES.map((c) => c.category)))];
+  const categories = ['ALL', ...Array.from(new Set(cases.map((c) => c.category)))];
 
-  const filteredCases = MOCK_EVAL_CASES.filter((c) => {
+  const filteredCases = cases.filter((c) => {
     const matchesSearch =
-      c.prompt.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (c.prompt || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
       c.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
       c.diffNote.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCat = selectedCategory === 'ALL' || c.category === selectedCategory;
@@ -109,7 +109,7 @@ export const EvalsView: React.FC<EvalsViewProps> = ({ project }) => {
                 </div>
 
                 <p className="text-xs text-[#A0A5AA] line-clamp-2 mb-2">
-                  {evalCase.prompt}
+                  {evalCase.prompt || '[Prompt content not retained]'}
                 </p>
 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[10px] text-[#5C6268] pt-2 border-t border-white/[0.04]">
@@ -153,7 +153,7 @@ export const EvalsView: React.FC<EvalsViewProps> = ({ project }) => {
             <div className="space-y-1.5">
               <div className="text-[9.5px] text-[#5C6268] uppercase tracking-wider">Input Prompt Vector</div>
               <div className="p-3 rounded bg-[#050505] border border-white/[0.04] text-[11px] text-[#D7DADD] leading-relaxed">
-                {selectedCase.prompt}
+                {selectedCase.prompt || '[Prompt content not retained]'}
               </div>
             </div>
 
@@ -200,4 +200,3 @@ export const EvalsView: React.FC<EvalsViewProps> = ({ project }) => {
     </div>
   );
 };
-

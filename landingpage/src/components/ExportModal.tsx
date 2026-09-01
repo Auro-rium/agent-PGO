@@ -11,11 +11,14 @@ interface ExportModalProps {
   isOpen: boolean;
   onClose: () => void;
   project: AgentProject;
+  onExport?: () => Promise<Blob | void>;
 }
 
-export const ExportModal: React.FC<ExportModalProps> = ({ isOpen, onClose, project }) => {
+export const ExportModal: React.FC<ExportModalProps> = ({ isOpen, onClose, project, onExport }) => {
   const [activeTab, setActiveTab] = useState<'python' | 'json' | 'yaml' | 'langgraph'>('python');
   const [copied, setCopied] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
 
   if (!isOpen) return null;
 
@@ -110,6 +113,25 @@ compiled_app = wrap_pgo_nodes(workflow, pgo_spec_id="${project.id}-${project.ver
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleServerExport = async () => {
+    if (!onExport) return;
+    setExporting(true);
+    setExportError('');
+    try {
+      const blob = await onExport();
+      if (blob) {
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `${project.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-agentpgo-export.yaml`;
+        anchor.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : 'Export failed.');
+    } finally { setExporting(false); }
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-[#050505]/80 backdrop-blur-sm flex items-center justify-center p-4">
       <div 
@@ -162,6 +184,8 @@ compiled_app = wrap_pgo_nodes(workflow, pgo_spec_id="${project.id}-${project.ver
           <span className="text-[#5C6268] text-[10px]">
             Target: {project.name} · -{project.savingsPct}% Execution Cost
           </span>
+          <div className="flex items-center gap-2">
+          {onExport && <button onClick={handleServerExport} disabled={exporting} className="px-3.5 py-1.5 rounded bg-[#0F1113] border border-white/[0.08] text-[#D7DADD] disabled:opacity-50">{exporting ? 'Exporting…' : 'Download verified export'}</button>}
           <button
             onClick={handleCopy}
             className="px-3.5 py-1.5 rounded silver-btn-gradient text-[#050505] font-bold flex items-center gap-1.5 shadow-sm transition-all"
@@ -178,9 +202,10 @@ compiled_app = wrap_pgo_nodes(workflow, pgo_spec_id="${project.id}-${project.ver
               </>
             )}
           </button>
+          </div>
         </div>
+        {exportError && <div className="px-3 pb-3 text-[10px] text-[#D7DADD]" role="alert">{exportError}</div>}
       </div>
     </div>
   );
 };
-

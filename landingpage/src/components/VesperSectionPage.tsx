@@ -188,7 +188,7 @@ export const VesperSectionPage: React.FC<Props> = ({
   onLaunchStudio,
 }) => {
   const [openFaq, setOpenFaq] = useState<number | null>(null);
-  const [selectedBenchmarkId, setSelectedBenchmarkId] = useState(42);
+  const [selectedBenchmarkId, setSelectedBenchmarkId] = useState("42");
   const selectedBenchmark =
     benchmarkCandidates.find(
       (candidate) => candidate.id === selectedBenchmarkId,
@@ -365,7 +365,7 @@ export const VesperSectionPage: React.FC<Props> = ({
                 <div className="vesper-candidate-price">${selectedBenchmark.costPerReq.toFixed(3)}<span> / execution</span></div>
                 <div className="vesper-candidate-stats">
                   <div>QUALITY <b>{selectedBenchmark.qualityPct.toFixed(1)}%</b></div>
-                  <div>P95 <b>{(selectedBenchmark.id === 42 ? selectedBenchmark.latencySec : selectedBenchmark.p95LatencySec).toFixed(1)}s</b></div>
+                  <div>P95 <b>{(selectedBenchmark.id === "42" ? selectedBenchmark.latencySec : selectedBenchmark.p95LatencySec).toFixed(1)}s</b></div>
                   <div className="vesper-savings"><b>{selectedBenchmark.savingsPct.toFixed(1)}% lower cost</b></div>
                 </div>
                 <button className="vesper-btn vesper-btn--solid" onClick={onLaunchStudio}>Optimize an Agent <ArrowRight size={15} /></button>
