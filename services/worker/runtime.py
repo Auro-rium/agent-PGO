@@ -7,18 +7,18 @@ with ``FOR UPDATE SKIP LOCKED`` and candidate rows are unique per job.
 """
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 import inspect
 import os
-from threading import Event
+from threading import Event, Lock, Thread
 from typing import Any, Callable
 from uuid import uuid4
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
-from apps.api.models import Job, JobCandidateResult, utc_now
+from apps.api.models import Job, JobCandidateResult, OptimizationResult, utc_now
 
 from .queue import QueueConsumer, QueueMessage
 
@@ -36,7 +36,22 @@ class JobState(str, Enum):
 TERMINAL_STATES = {JobState.COMPLETED.value, JobState.FAILED.value, JobState.CANCELLED.value}
 
 
+def _utc(value: Any) -> datetime | None:
+    """Normalize SQLite's naive timestamps to UTC-aware values."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 class SpendLimitExceeded(RuntimeError):
+    pass
+
+
+class LeaseLostError(RuntimeError):
+    """Raised when a worker attempts a mutation after losing its lease."""
+
     pass
 
 
@@ -89,7 +104,7 @@ class JobRepository:
                     select(Job)
                     .options(selectinload(Job.candidate_results))
                     .where(
-                        Job.status == JobState.RUNNING.value,
+                        Job.status.in_((JobState.RUNNING.value, JobState.EVALUATING.value, JobState.VALIDATING.value)),
                         Job.claim_expires_at.is_not(None),
                         Job.claim_expires_at < now,
                         Job.available_at <= now,
@@ -101,7 +116,8 @@ class JobRepository:
                 job = session.scalar(query)
             if job is None:
                 return None
-            self._claim(job, worker_id, now, lease_seconds)
+            reclaim = job.status in {JobState.RUNNING.value, JobState.EVALUATING.value, JobState.VALIDATING.value}
+            self._claim(job, worker_id, now, lease_seconds, reclaim=reclaim)
             session.flush()
             return job
 
@@ -117,16 +133,24 @@ class JobRepository:
             )
             if job is None or job.status in TERMINAL_STATES:
                 return job
-            if job.status == JobState.RUNNING.value and job.claim_expires_at and job.claim_expires_at > now and job.claimed_by != worker_id:
+            reclaim = job.status in {JobState.RUNNING.value, JobState.EVALUATING.value, JobState.VALIDATING.value}
+            if reclaim:
+                if job.claim_expires_at is None or _utc(job.claim_expires_at) > now:
+                    return None
+            elif job.status != JobState.QUEUED.value:
                 return None
-            if job.status not in {JobState.QUEUED.value, JobState.RUNNING.value}:
-                return None
-            self._claim(job, worker_id, now, lease_seconds)
+            self._claim(job, worker_id, now, lease_seconds, reclaim=reclaim)
             session.flush()
             return job
 
     @staticmethod
-    def _claim(job: Job, worker_id: str, now: Any, lease_seconds: int) -> None:
+    def _claim(job: Job, worker_id: str, now: Any, lease_seconds: int, *, reclaim: bool = False) -> None:
+        if reclaim:
+            checkpoint = dict(job.checkpoint or {})
+            reservations = dict(checkpoint.pop("spend_reservations", {}) or {})
+            if reservations:
+                job.spent_usd = max(0.0, float(job.spent_usd or 0.0) - sum(float(value) for value in reservations.values()))
+                job.checkpoint = checkpoint
         job.status = JobState.RUNNING.value
         job.claimed_by = worker_id
         job.claim_expires_at = now + timedelta(seconds=lease_seconds)
@@ -134,7 +158,16 @@ class JobRepository:
         job.started_at = job.started_at or now
         job.error = None
 
-    def transition(self, job_id: str, state: JobState | str, *, worker_id: str | None = None, error: str | None = None) -> Job | None:
+    @staticmethod
+    def _lease_matches(job: Job, worker_id: str, lease_token: Any | None) -> bool:
+        return (
+            job.claimed_by == worker_id
+            and job.claim_expires_at is not None
+            and _utc(job.claim_expires_at) > _utc(utc_now())
+            and (lease_token is None or _utc(job.claim_expires_at) == _utc(lease_token))
+        )
+
+    def transition(self, job_id: str, state: JobState | str, *, worker_id: str | None = None, lease_token: Any | None = None, error: str | None = None) -> Job | None:
         state_value = state.value if isinstance(state, JobState) else str(state)
         allowed = {s.value for s in JobState}
         if state_value not in allowed:
@@ -143,7 +176,11 @@ class JobRepository:
             job = session.get(Job, job_id, with_for_update=True)
             if job is None:
                 return None
-            if worker_id and job.claimed_by not in {None, worker_id}:
+            if state_value in TERMINAL_STATES and worker_id is None:
+                return None
+            if worker_id is None and job.claimed_by is not None:
+                return None
+            if worker_id is not None and not self._lease_matches(job, worker_id, lease_token):
                 return None
             job.status = state_value
             job.error = error
@@ -154,10 +191,12 @@ class JobRepository:
             session.flush()
             return job
 
-    def checkpoint(self, job_id: str, checkpoint: dict[str, Any], *, spent_usd: float | None = None) -> Job | None:
+    def checkpoint(self, job_id: str, checkpoint: dict[str, Any], *, spent_usd: float | None = None, worker_id: str | None = None, lease_token: Any | None = None) -> Job | None:
         with self.session_factory.begin() as session:
             job = session.get(Job, job_id, with_for_update=True)
             if job is None:
+                return None
+            if worker_id and (job.claimed_by != worker_id or (lease_token is not None and _utc(job.claim_expires_at) != _utc(lease_token)) or (job.claim_expires_at is not None and _utc(job.claim_expires_at) <= utc_now())):
                 return None
             job.checkpoint = dict(checkpoint)
             if spent_usd is not None:
@@ -165,8 +204,63 @@ class JobRepository:
             session.flush()
             return job
 
+    def renew_lease(self, job_id: str, worker_id: str, *, lease_seconds: int = 60, lease_token: Any | None = None) -> Job | None:
+        lease_seconds = max(1, int(lease_seconds))
+        now = utc_now()
+        with self.session_factory.begin() as session:
+            job = session.get(Job, job_id, with_for_update=True)
+            if job is None or job.status in TERMINAL_STATES or job.claimed_by != worker_id:
+                return None
+            if job.claim_expires_at is None or _utc(job.claim_expires_at) <= now or (lease_token is not None and _utc(job.claim_expires_at) != _utc(lease_token)):
+                return None
+            job.claim_expires_at = now + timedelta(seconds=lease_seconds)
+            session.flush()
+            return job
+
+    def reserve_spend(self, job_id: str, candidate_id: str, amount_usd: float, *, worker_id: str | None = None, lease_token: Any | None = None) -> bool:
+        amount = float(amount_usd)
+        if amount < 0:
+            raise ValueError("reservation amount cannot be negative")
+        with self.session_factory.begin() as session:
+            job = session.get(Job, job_id, with_for_update=True)
+            if job is None:
+                return False
+            if worker_id and (job.claimed_by != worker_id or (lease_token is not None and _utc(job.claim_expires_at) != _utc(lease_token)) or (job.claim_expires_at is not None and _utc(job.claim_expires_at) <= utc_now())):
+                return False
+            checkpoint = dict(job.checkpoint or {})
+            reservations = dict(checkpoint.get("spend_reservations", {}))
+            if candidate_id in reservations:
+                return False
+            cap = float(job.max_experiment_cost_usd or 0.0)
+            if float(job.spent_usd or 0.0) + amount > cap + 1e-12:
+                return False
+            reservations[str(candidate_id)] = amount
+            checkpoint["spend_reservations"] = reservations
+            job.checkpoint = checkpoint
+            job.spent_usd = float(job.spent_usd or 0.0) + amount
+            session.flush()
+            return True
+
+    def release_spend_reservation(self, job_id: str, candidate_id: str, *, worker_id: str | None = None, lease_token: Any | None = None) -> bool:
+        with self.session_factory.begin() as session:
+            job = session.get(Job, job_id, with_for_update=True)
+            if job is None:
+                return False
+            if worker_id and (job.claimed_by != worker_id or (lease_token is not None and _utc(job.claim_expires_at) != _utc(lease_token))):
+                return False
+            checkpoint = dict(job.checkpoint or {})
+            reservations = dict(checkpoint.get("spend_reservations", {}))
+            amount = reservations.pop(str(candidate_id), None)
+            if amount is None:
+                return False
+            checkpoint["spend_reservations"] = reservations
+            job.checkpoint = checkpoint
+            job.spent_usd = max(0.0, float(job.spent_usd or 0.0) - float(amount))
+            session.flush()
+            return True
+
     def record_candidate(
-        self, job_id: str, candidate_id: str, result: dict[str, Any], cost_usd: float, checkpoint: dict[str, Any]
+        self, job_id: str, candidate_id: str, result: dict[str, Any], cost_usd: float, checkpoint: dict[str, Any], *, worker_id: str | None = None, lease_token: Any | None = None, reserved_usd: float | None = None
     ) -> tuple[JobCandidateResult, bool]:
         """Insert a candidate once and atomically checkpoint its spend.
 
@@ -177,6 +271,8 @@ class JobRepository:
             job = session.get(Job, job_id, with_for_update=True)
             if job is None:
                 raise KeyError(job_id)
+            if worker_id and (job.claimed_by != worker_id or (lease_token is not None and _utc(job.claim_expires_at) != _utc(lease_token)) or (job.claim_expires_at is not None and _utc(job.claim_expires_at) <= utc_now())):
+                raise LeaseLostError(job_id)
             existing = session.scalar(
                 select(JobCandidateResult).where(
                     JobCandidateResult.job_id == job_id,
@@ -193,22 +289,70 @@ class JobRepository:
                 cost_usd=float(cost_usd),
             )
             session.add(row)
-            job.checkpoint = dict(checkpoint)
-            job.spent_usd = float(job.spent_usd or 0) + float(cost_usd)
+            next_checkpoint = dict(checkpoint)
+            reservations = dict(next_checkpoint.get("spend_reservations", {}))
+            reserved = reservations.pop(str(candidate_id), None) if reserved_usd is not None else None
+            next_checkpoint["spend_reservations"] = reservations
+            job.checkpoint = next_checkpoint
+            if reserved_usd is None:
+                job.spent_usd = float(job.spent_usd or 0) + float(cost_usd)
+            else:
+                job.spent_usd = float(job.spent_usd or 0) + float(cost_usd) - float(reserved if reserved is not None else reserved_usd)
             session.flush()
             return row, True
 
-    def release_for_retry(self, job_id: str, error: str, *, delay_seconds: int = 0) -> None:
+    def set_result(self, job_id: str, result: dict[str, Any], *, worker_id: str | None = None, lease_token: Any | None = None) -> Job | None:
+        with self.session_factory.begin() as session:
+            job = session.get(Job, job_id, with_for_update=True)
+            if job is None:
+                return None
+            if worker_id and (job.claimed_by != worker_id or (lease_token is not None and _utc(job.claim_expires_at) != _utc(lease_token)) or (job.claim_expires_at is not None and _utc(job.claim_expires_at) <= utc_now())):
+                return None
+            job.result = dict(result)
+            session.flush()
+            return job
+
+    def release_for_retry(
+        self, job_id: str, error: str, *, delay_seconds: int = 0, worker_id: str | None = None, lease_token: Any | None = None
+    ) -> bool:
         with self.session_factory.begin() as session:
             job = session.get(Job, job_id, with_for_update=True)
             if job is None or job.status in TERMINAL_STATES:
-                return
+                return False
+            if worker_id is None or not self._lease_matches(job, worker_id, lease_token):
+                return False
             job.status = JobState.QUEUED.value
             job.available_at = utc_now() + timedelta(seconds=max(0, int(delay_seconds)))
             job.claimed_by = None
             job.claim_expires_at = None
             job.error = error[:4000]
             session.flush()
+            return True
+
+    def persist_optimization_result(
+        self, job_id: str, recommendation: dict[str, Any], *, status: str = JobState.COMPLETED.value,
+        metadata: dict[str, Any] | None = None, worker_id: str | None = None, lease_token: Any | None = None,
+    ) -> OptimizationResult | None:
+        with self.session_factory.begin() as session:
+            job = session.get(Job, job_id, with_for_update=True)
+            if job is None or job.kind != "optimization" or worker_id is None or not self._lease_matches(job, worker_id, lease_token):
+                return None
+            value = dict(recommendation)
+            current = dict(job.result or {})
+            current["recommendation"] = value
+            job.result = current
+            result = session.scalar(select(OptimizationResult).where(OptimizationResult.job_id == job_id).with_for_update())
+            if result is None:
+                result = OptimizationResult(organization_id=job.organization_id, project_id=job.project_id, job_id=job.id, status=status, recommendation=value, metadata_json=dict(metadata or {}))
+                session.add(result)
+            else:
+                result.status = status
+                result.recommendation = value
+                if metadata is not None:
+                    result.metadata_json = dict(metadata)
+            session.flush()
+            return result
+
 
 
 CandidateExecutor = Callable[..., dict[str, Any] | float | int]
@@ -227,6 +371,8 @@ class WorkerRuntime:
         visibility_timeout: int = 60,
         max_receive_count: int = 3,
         retry_delay_seconds: int = 1,
+        allow_legacy_payload: bool = False,
+        lease_renewal_hook: Callable[[Job], None] | None = None,
     ) -> None:
         self.repository = JobRepository(session_factory)
         self.queue = queue
@@ -236,6 +382,12 @@ class WorkerRuntime:
         self.visibility_timeout = max(0, min(int(visibility_timeout), 43_200))
         self.max_receive_count = max(1, int(max_receive_count))
         self.retry_delay_seconds = max(0, int(retry_delay_seconds))
+        self.allow_legacy_payload = bool(allow_legacy_payload)
+        self.lease_renewal_hook = lease_renewal_hook
+        self._lease_token: Any | None = None
+        self._active_message: QueueMessage | None = None
+        self._lease_lock = Lock()
+        self._executor_lease_lost: Exception | None = None
 
     @staticmethod
     def _default_candidate_executor(candidate: dict[str, Any], _job: Job) -> dict[str, Any]:
@@ -250,51 +402,112 @@ class WorkerRuntime:
         if not isinstance(job_id, str) or not job_id:
             self.queue.move_to_dlq(message)
             return False
-        if message.receive_count > self.max_receive_count:
-            self.queue.move_to_dlq(message)
-            job = self.repository.get(job_id)
-            if job and job.status not in TERMINAL_STATES:
-                self.repository.transition(job_id, JobState.FAILED, error="message retry limit exceeded")
-            return False
         existing = self.repository.get(job_id)
         if existing is None:
-            # A malformed/stale message must not be retried forever.  There is
-            # no durable row that could become claimable, so route it directly
-            # to the DLQ and acknowledge it at the transport layer.
             self.queue.move_to_dlq(message)
             return False
         if existing.status in TERMINAL_STATES:
             self.queue.acknowledge(message)
             return False
+        if message.receive_count > self.max_receive_count:
+            # Claim before failing so a late/duplicate message cannot terminally
+            # overwrite another worker's active lease.
+            claimed = self.repository.claim(job_id, self.worker_id, lease_seconds=self.lease_seconds)
+            if claimed is not None:
+                self.repository.transition(job_id, JobState.FAILED, worker_id=self.worker_id, lease_token=claimed.claim_expires_at, error="message retry limit exceeded")
+            self.queue.move_to_dlq(message)
+            return False
         job = self.repository.claim(job_id, self.worker_id, lease_seconds=self.lease_seconds)
         if job is None:
             self.queue.retry(message, visibility_timeout=self.visibility_timeout)
             return False
+        self._lease_token = job.claim_expires_at
+        self._active_message = message
         try:
             self._execute(job)
         except SpendLimitExceeded as exc:
-            self.repository.transition(job.id, JobState.FAILED, worker_id=self.worker_id, error=str(exc))
+            self.repository.transition(job.id, JobState.FAILED, worker_id=self.worker_id, lease_token=self._lease_token, error=str(exc))
         except Exception as exc:
             if message.receive_count >= self.max_receive_count or job.attempt_count >= job.max_attempts:
-                self.repository.transition(job.id, JobState.FAILED, worker_id=self.worker_id, error=str(exc))
+                self.repository.transition(job.id, JobState.FAILED, worker_id=self.worker_id, lease_token=self._lease_token, error=str(exc))
                 self.queue.move_to_dlq(message)
             else:
-                self.repository.release_for_retry(job.id, str(exc), delay_seconds=self.retry_delay_seconds)
+                self.repository.release_for_retry(job.id, str(exc), delay_seconds=self.retry_delay_seconds, worker_id=self.worker_id, lease_token=self._lease_token)
                 self.queue.retry(message, visibility_timeout=self.visibility_timeout)
             return True
         self.queue.acknowledge(message)
+        self._active_message = None
+        self._lease_token = None
         return True
+
+    def _extend_visibility(self, message: QueueMessage) -> None:
+        extender = getattr(self.queue, "extend_visibility", None)
+        if extender is not None:
+            extender(message, self.visibility_timeout)
+
+    def _renew_lease(self, job: Job, message: QueueMessage | None = None) -> None:
+        with self._lease_lock:
+            token = self._lease_token
+            renewed = self.repository.renew_lease(job.id, self.worker_id, lease_seconds=self.lease_seconds, lease_token=token)
+            if renewed is None:
+                raise LeaseLostError(job.id)
+            self._lease_token = renewed.claim_expires_at
+        if self.lease_renewal_hook:
+            self.lease_renewal_hook(renewed)
+        if message is not None:
+            self._extend_visibility(message)
+
+    def _invoke_with_heartbeat(self, candidate: dict[str, Any], job: Job) -> dict[str, Any] | float | int:
+        stop = Event()
+        interval = max(0.05, min(self.lease_seconds / 3.0, 5.0))
+        self._executor_lease_lost = None
+
+        def heartbeat() -> None:
+            while not stop.wait(interval):
+                try:
+                    self._renew_lease(job, self._active_message)
+                except Exception as exc:  # the executor may still be in flight
+                    self._executor_lease_lost = exc
+                    stop.set()
+                    return
+
+        thread = Thread(target=heartbeat, name="agentpgo-lease-heartbeat", daemon=True)
+        thread.start()
+        try:
+            result = self._invoke_executor(candidate, job)
+        finally:
+            stop.set()
+            thread.join(timeout=max(1.0, interval * 2))
+        if self._executor_lease_lost is not None:
+            raise LeaseLostError(job.id) from self._executor_lease_lost
+        return result
 
     def _execute(self, claimed: Job) -> None:
         job = self.repository.get(claimed.id)
         if job is None:
             raise KeyError(claimed.id)
         payload = job.payload if isinstance(job.payload, dict) else {}
-        raw_candidates = payload.get("candidates", [])
+        if job.kind == "profile":
+            if self.repository.transition(job.id, JobState.EVALUATING, worker_id=self.worker_id, lease_token=self._lease_token) is None:
+                raise LeaseLostError(job.id)
+            profile = {"project_id": job.project_id, "status": "profiled", "payload": {k: v for k, v in payload.items() if k not in {"prompt", "input", "output", "content", "messages"}}}
+            if self.repository.set_result(job.id, profile, worker_id=self.worker_id, lease_token=self._lease_token) is None:
+                raise LeaseLostError(job.id)
+            if self.repository.transition(job.id, JobState.COMPLETED, worker_id=self.worker_id, lease_token=self._lease_token) is None:
+                raise LeaseLostError(job.id)
+            return
+        config = payload.get("config")
+        if isinstance(config, dict):
+            raw_candidates = config.get("candidates", [])
+        elif self.allow_legacy_payload:
+            raw_candidates = payload.get("candidates", [])
+        else:
+            raise ValueError("job payload must contain config.candidates")
         if not isinstance(raw_candidates, list):
-            raise ValueError("job payload candidates must be a list")
+            raise ValueError("job payload config.candidates must be a list")
         candidates = [item if isinstance(item, dict) else {"id": str(index), "value": item} for index, item in enumerate(raw_candidates)]
-        self.repository.transition(job.id, JobState.EVALUATING, worker_id=self.worker_id)
+        if self.repository.transition(job.id, JobState.EVALUATING, worker_id=self.worker_id, lease_token=self._lease_token) is None:
+            raise LeaseLostError(job.id)
         fresh = self.repository.get(job.id)
         completed_ids = set((fresh.checkpoint if fresh else {}).get("completed_candidate_ids", []))
         spent = float((fresh.spent_usd if fresh else 0.0) or 0.0)
@@ -303,28 +516,61 @@ class WorkerRuntime:
             candidate_id = str(candidate.get("id", index))
             if candidate_id in completed_ids or candidate_id in persisted:
                 continue
+            self._renew_lease(job, self._active_message)
             estimated = float(candidate.get("cost_usd", 0.0) or 0.0)
             if estimated < 0:
                 raise ValueError("candidate cost cannot be negative")
             cap = float((fresh.max_experiment_cost_usd if fresh else job.max_experiment_cost_usd) or 0.0)
             if spent + estimated > cap + 1e-12:
                 raise SpendLimitExceeded(f"spend cap exceeded: {spent + estimated:.8f} > {cap:.8f}")
-            result = self._invoke_executor(candidate, fresh or job)
+            if not self.repository.reserve_spend(job.id, candidate_id, estimated, worker_id=self.worker_id, lease_token=self._lease_token):
+                raise SpendLimitExceeded(f"spend cap exceeded while reserving candidate {candidate_id}")
+            reserved = True
+            try:
+                result = self._invoke_with_heartbeat(candidate, fresh or job)
+            except Exception:
+                self.repository.release_spend_reservation(job.id, candidate_id, worker_id=self.worker_id, lease_token=self._lease_token)
+                raise
             if isinstance(result, (int, float)):
                 result = {"score": float(result)}
             if not isinstance(result, dict):
+                self.repository.release_spend_reservation(job.id, candidate_id, worker_id=self.worker_id, lease_token=self._lease_token)
                 raise TypeError("candidate executor must return a mapping or number")
             cost = float(result.get("cost_usd", estimated) or 0.0)
             if cost < 0 or spent + cost > cap + 1e-12:
+                self.repository.release_spend_reservation(job.id, candidate_id, worker_id=self.worker_id, lease_token=self._lease_token)
                 raise SpendLimitExceeded(f"spend cap exceeded: {spent + cost:.8f} > {cap:.8f}")
             spent += cost
             completed_ids.add(candidate_id)
             checkpoint = {"next_candidate_index": index + 1, "completed_candidate_ids": sorted(completed_ids)}
-            self.repository.record_candidate(job.id, candidate_id, result, cost, checkpoint)
-        self.repository.transition(job.id, JobState.VALIDATING, worker_id=self.worker_id)
+            if self.repository.record_candidate(job.id, candidate_id, result, cost, checkpoint, worker_id=self.worker_id, lease_token=self._lease_token, reserved_usd=estimated)[1] is False:
+                completed_ids.add(candidate_id)
+        if self.repository.transition(job.id, JobState.VALIDATING, worker_id=self.worker_id, lease_token=self._lease_token) is None:
+            raise LeaseLostError(job.id)
         final = self.repository.get(job.id)
-        self.repository.checkpoint(job.id, {**(final.checkpoint if final else {}), "next_candidate_index": len(candidates), "completed_candidate_ids": sorted(completed_ids)}, spent_usd=spent)
-        self.repository.transition(job.id, JobState.COMPLETED, worker_id=self.worker_id)
+        if self.repository.checkpoint(job.id, {**(final.checkpoint if final else {}), "next_candidate_index": len(candidates), "completed_candidate_ids": sorted(completed_ids)}, spent_usd=float(final.spent_usd if final else spent), worker_id=self.worker_id, lease_token=self._lease_token) is None:
+            raise LeaseLostError(job.id)
+        rows = list((final.candidate_results if final else []))
+        aggregate = {"candidates": [{"id": row.candidate_id, **row.result} for row in rows], "spent_usd": float(final.spent_usd if final else spent)}
+        if self.repository.set_result(job.id, aggregate, worker_id=self.worker_id, lease_token=self._lease_token) is None:
+            raise LeaseLostError(job.id)
+        if job.kind == "optimization" and rows:
+            from services.optimizer.pareto import pareto_frontier, recommend
+            from services.optimizer.staged import Candidate
+            cfg = config if isinstance(config, dict) else {}
+            typed = []
+            for row in rows:
+                value = row.result
+                typed.append(Candidate(id=row.candidate_id, cost_usd=float(value.get("cost_usd", 0.0)), latency_ms=float(value.get("latency_ms", 0.0)), quality=float(value.get("quality", value.get("score", 0.0))), config={k: value[k] for k in ("provider", "model", "parameters") if k in value}))
+            max_latency = cfg.get("max_p95_latency_ms", cfg.get("max_latency_ms"))
+            max_cost = cfg.get("max_cost_usd")
+            eligible = pareto_frontier(typed, max_latency_ms=max_latency, max_cost_usd=max_cost)
+            chosen = recommend(eligible, max_latency_ms=max_latency, max_cost_usd=max_cost)
+            recommendation = {"id": chosen.id, "config": chosen.config, "metrics": {"quality": chosen.quality, "latency_ms": chosen.latency_ms, "cost_usd": chosen.cost_usd}, "gates": {"quality": "pass", "latency": "pass", "spend": "pass"}}
+            if self.repository.persist_optimization_result(job.id, recommendation, metadata={"candidate_count": len(rows)}, worker_id=self.worker_id, lease_token=self._lease_token) is None:
+                raise LeaseLostError(job.id)
+        if self.repository.transition(job.id, JobState.COMPLETED, worker_id=self.worker_id, lease_token=self._lease_token) is None:
+            raise LeaseLostError(job.id)
 
     def _invoke_executor(self, candidate: dict[str, Any], job: Job) -> dict[str, Any] | float | int:
         try:

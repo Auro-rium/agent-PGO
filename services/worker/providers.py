@@ -8,6 +8,8 @@ evaluation deterministic and preventing accidental provider requests.
 from dataclasses import dataclass
 import time
 from typing import Any, Callable, Literal, Protocol
+from threading import Thread
+from queue import Queue as ThreadQueue, Empty
 
 
 @dataclass(frozen=True)
@@ -41,10 +43,13 @@ class RetryPolicy:
     max_attempts: int = 3
     backoff_seconds: float = 0.25
     max_backoff_seconds: float = 8.0
+    timeout_seconds: float = 30.0
 
     def __post_init__(self) -> None:
-        if self.max_attempts < 1 or self.backoff_seconds < 0:
+        if self.max_attempts < 1 or self.max_attempts > 10 or self.backoff_seconds < 0 or self.max_backoff_seconds < 0:
             raise ValueError("invalid retry policy")
+        if self.timeout_seconds <= 0 or self.timeout_seconds > 300:
+            raise ValueError("timeout_seconds must be between 0 and 300")
 
 
 Transport = Callable[[ProviderRequest], ProviderResponse]
@@ -60,9 +65,9 @@ def classify_provider_error(error: BaseException) -> ProviderError:
     lower = message.casefold()
     if status in (401, 403) or "api key" in lower or "unauthorized" in lower:
         return ProviderError("authentication", message, False, status)
-    if status == 429 or "rate limit" in lower or "too many requests" in lower:
+    if status in (425, 429) or "rate limit" in lower or "too many requests" in lower:
         return ProviderError("rate_limit", message, True, status)
-    if isinstance(error, (TimeoutError, ConnectionError)) or "timeout" in lower:
+    if status == 408 or isinstance(error, (TimeoutError, ConnectionError)) or "timeout" in lower:
         return ProviderError("timeout", message, True, status)
     if status is not None and status >= 500:
         return ProviderError("server", message, True, status)
@@ -72,10 +77,30 @@ def classify_provider_error(error: BaseException) -> ProviderError:
 
 
 class ProviderExecutor:
-    def __init__(self, transport: Transport | None = None, retry_policy: RetryPolicy | None = None, sleeper: Callable[[float], None] = time.sleep) -> None:
+    def __init__(self, transport: Transport | None = None, retry_policy: RetryPolicy | None = None, sleeper: Callable[[float], None] = time.sleep, *, timeout_seconds: float | None = None) -> None:
         self.transport = transport
         self.retry_policy = retry_policy or RetryPolicy()
         self.sleeper = sleeper
+        self.timeout_seconds = self.retry_policy.timeout_seconds if timeout_seconds is None else float(timeout_seconds)
+        if self.timeout_seconds <= 0 or self.timeout_seconds > 300:
+            raise ValueError("timeout_seconds must be between 0 and 300")
+
+    def _call_with_timeout(self, request: ProviderRequest) -> ProviderResponse:
+        result: ThreadQueue[tuple[bool, Any]] = ThreadQueue(maxsize=1)
+        def run() -> None:
+            try:
+                result.put((True, self.transport(request)))
+            except BaseException as exc:
+                result.put((False, exc))
+        thread = Thread(target=run, daemon=True)
+        thread.start()
+        try:
+            ok, value = result.get(timeout=self.timeout_seconds)
+        except Empty as exc:
+            raise TimeoutError(f"provider call exceeded {self.timeout_seconds:.3f}s timeout") from exc
+        if not ok:
+            raise value
+        return value
 
     def execute(self, request: ProviderRequest) -> ProviderResponse:
         if self.transport is None:
@@ -83,11 +108,11 @@ class ProviderExecutor:
         last_error: ProviderError | None = None
         for attempt in range(self.retry_policy.max_attempts):
             try:
-                result = self.transport(request)
+                result = self._call_with_timeout(request)
                 if not isinstance(result, ProviderResponse):
                     raise TypeError("provider transport must return ProviderResponse")
                 return result
-            except BaseException as exc:
+            except Exception as exc:
                 last_error = classify_provider_error(exc)
                 if not last_error.retryable or attempt + 1 >= self.retry_policy.max_attempts:
                     raise RuntimeError(f"{last_error.category}: {last_error.message}") from exc

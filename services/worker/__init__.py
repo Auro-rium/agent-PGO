@@ -12,6 +12,6 @@ from .providers import (
 __all__ = ["ProviderExecutor", "ProviderRequest", "ProviderResponse", "ProviderError", "RetryPolicy", "OpenAIExecutor", "AnthropicExecutor", "GoogleExecutor"]
 
 from .queue import InMemoryQueue, QueueMessage, SQSQueueConsumer, SQSQueuePublisher, bounded_visibility_timeout
-from .runtime import JobRepository, JobState, SpendLimitExceeded, WorkerRuntime
+from .runtime import JobRepository, JobState, LeaseLostError, SpendLimitExceeded, WorkerRuntime
 
-__all__ += ["InMemoryQueue", "QueueMessage", "SQSQueueConsumer", "SQSQueuePublisher", "bounded_visibility_timeout", "JobRepository", "JobState", "SpendLimitExceeded", "WorkerRuntime"]
+__all__ += ["InMemoryQueue", "QueueMessage", "SQSQueueConsumer", "SQSQueuePublisher", "bounded_visibility_timeout", "JobRepository", "JobState", "LeaseLostError", "SpendLimitExceeded", "WorkerRuntime"]

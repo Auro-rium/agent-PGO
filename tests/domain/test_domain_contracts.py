@@ -88,9 +88,9 @@ def test_optimizer_runs_sensitivity_beam_and_halving_deterministically():
 
 
 def test_gate_requires_quality_non_regression_and_significance():
-    gate = StatisticalGate(min_quality_delta=0.01, alpha=0.05)
-    assert gate.accept(baseline=[1, 1, 1], candidate=[1, 1, 1.1])
-    assert not gate.accept(baseline=[1, 1, 1], candidate=[0.9, 0.9, 1])
+    gate = StatisticalGate(min_quality_delta=0.01, alpha=0.05, min_samples_for_significance=3)
+    assert gate.accept(baseline=[0.8, 0.8, 0.8], candidate=[0.9, 0.9, 0.9])
+    assert not gate.accept(baseline=[0.9, 0.9, 0.9], candidate=[0.8, 0.8, 0.9])
 
 
 def test_pareto_recommendation_and_yaml_export():

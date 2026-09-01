@@ -37,6 +37,7 @@ class QueueConsumer(Protocol):
     def receive(self, *, max_messages: int = 1, visibility_timeout: int = 60, wait_time_seconds: int = 0) -> list[QueueMessage]: ...
     def acknowledge(self, message: QueueMessage) -> None: ...
     def retry(self, message: QueueMessage, *, visibility_timeout: int) -> None: ...
+    def extend_visibility(self, message: QueueMessage, visibility_timeout: int) -> None: ...
     def move_to_dlq(self, message: QueueMessage) -> None: ...
 
 
@@ -102,12 +103,16 @@ class SQSQueueConsumer:
             VisibilityTimeout=bounded_visibility_timeout(visibility_timeout),
         )
 
+    def extend_visibility(self, message: QueueMessage, visibility_timeout: int) -> None:
+        self.client.change_message_visibility(QueueUrl=self.queue_url, ReceiptHandle=message.receipt_handle, VisibilityTimeout=bounded_visibility_timeout(visibility_timeout))
+
     def move_to_dlq(self, message: QueueMessage) -> None:
-        if self.dlq_url:
-            self.client.send_message(
-                QueueUrl=self.dlq_url,
-                MessageBody=json.dumps(message.body, separators=(",", ":"), sort_keys=True),
-            )
+        if not self.dlq_url:
+            raise RuntimeError("DLQ is not configured; refusing to acknowledge message")
+        self.client.send_message(
+            QueueUrl=self.dlq_url,
+            MessageBody=json.dumps(message.body, separators=(",", ":"), sort_keys=True),
+        )
         self.acknowledge(message)
 
 
@@ -156,6 +161,9 @@ class InMemoryQueue:
         del visibility_timeout
         retried = QueueMessage(message.message_id, message.receipt_handle, message.body, message.receive_count + 1)
         self._messages.append(retried and _InMemoryEnvelope(retried))
+
+    def extend_visibility(self, message: QueueMessage, visibility_timeout: int) -> None:
+        del message, visibility_timeout
 
     def move_to_dlq(self, message: QueueMessage) -> None:
         self.dead_letters.append(message)

@@ -160,6 +160,9 @@ class Job(Base):
     candidate_results: Mapped[list[JobCandidateResult]] = relationship(
         back_populates="job", cascade="all, delete-orphan", order_by="JobCandidateResult.created_at"
     )
+    optimization_result: Mapped[OptimizationResult | None] = relationship(
+        back_populates="job", cascade="all, delete-orphan", uselist=False
+    )
 
 
 class JobCandidateResult(Base):
@@ -168,7 +171,7 @@ class JobCandidateResult(Base):
     __tablename__ = "job_candidate_results"
     __table_args__ = (
         UniqueConstraint("job_id", "candidate_id", name="uq_job_candidate_results_job_candidate"),
-        Index("ix_job_candidate_results_job", "job_id"),
+        Index("ix_job_candidate_results_job_id", "job_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -188,6 +191,113 @@ class JobCandidateResult(Base):
     job: Mapped[Job] = relationship(back_populates="candidate_results")
 
 
+
 # ``Job`` intentionally stores the wire field as ``status``; callers may use
 # ``state`` as the domain term without creating a second persisted column.
 Job.state = property(lambda self: self.status, lambda self, value: setattr(self, "status", value))  # type: ignore[attr-defined]
+
+
+class EvalDataset(Base):
+    """Immutable-by-version evaluation dataset metadata."""
+    __tablename__ = "eval_datasets"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "name", "version", name="uq_eval_datasets_organization_name_version"),
+        Index("ix_eval_datasets_organization_created", "organization_id", "created_at"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    metadata_json: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    cases: Mapped[list[EvalCase]] = relationship(back_populates="dataset", cascade="all, delete-orphan", order_by="EvalCase.ordinal")
+    graders: Mapped[list[EvalGrader]] = relationship(back_populates="dataset", cascade="all, delete-orphan", order_by="EvalGrader.ordinal")
+
+
+class EvalCase(Base):
+    """One input/expected example in a dataset version."""
+    __tablename__ = "eval_cases"
+    __table_args__ = (
+        UniqueConstraint("dataset_id", "case_id", name="uq_eval_cases_dataset_case"),
+        Index("ix_eval_cases_dataset_ordinal", "dataset_id", "ordinal"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    dataset_id: Mapped[str] = mapped_column(String(36), ForeignKey("eval_datasets.id", ondelete="CASCADE"), nullable=False, index=True)
+    case_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    input_data: Mapped[dict | str] = mapped_column("input", JSON, nullable=False)
+    expected: Mapped[object] = mapped_column(JSON, nullable=False)
+    metadata_json: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    dataset: Mapped[EvalDataset] = relationship(back_populates="cases")
+
+
+class EvalGrader(Base):
+    """Serializable deterministic grader configuration for a dataset."""
+    __tablename__ = "eval_graders"
+    __table_args__ = (
+        UniqueConstraint("dataset_id", "name", name="uq_eval_graders_dataset_name"),
+        Index("ix_eval_graders_dataset_ordinal", "dataset_id", "ordinal"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    dataset_id: Mapped[str] = mapped_column(String(36), ForeignKey("eval_datasets.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    dataset: Mapped[EvalDataset] = relationship(back_populates="graders")
+
+
+class OutboxEvent(Base):
+    """Transactional event waiting for publication to the queue."""
+    __tablename__ = "outbox_events"
+    __table_args__ = (
+        Index("ix_outbox_events_claimable", "status", "available_at", "created_at"),
+        Index("ix_outbox_events_aggregate", "aggregate_type", "aggregate_id"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True)
+    aggregate_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    aggregate_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    dedupe_key: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    @property
+    def event_name(self) -> str:
+        return self.event_type
+    @event_name.setter
+    def event_name(self, value: str) -> None:
+        self.event_type = value
+
+
+class OptimizationResult(Base):
+    """Durable recommendation and result metadata for one optimization job."""
+    __tablename__ = "optimization_results"
+    __table_args__ = (Index("ix_optimization_results_organization_created", "organization_id", "created_at"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
+    job_id: Mapped[str] = mapped_column(String(36), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, unique=True)
+    schema_version: Mapped[str] = mapped_column(String(16), nullable=False, default="v1")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    recommendation: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    metadata_json: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    job: Mapped[Job] = relationship(back_populates="optimization_result")
+    @property
+    def result(self) -> dict:
+        return self.recommendation
+    @result.setter
+    def result(self, value: dict) -> None:
+        self.recommendation = value
