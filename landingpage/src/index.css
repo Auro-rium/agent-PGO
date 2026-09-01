@@ -209,3 +209,27 @@
   .studio-shell .studio-frontier > div:first-child { padding: 1rem; }
   .studio-shell .studio-summary-strip { padding-inline: 1rem; }
 }
+
+
+/* Native drag affordances for adjustable studio panels. */
+.studio-shell .studio-rail {
+  min-width: 3.75rem;
+  max-width: 8rem;
+  resize: horizontal;
+  overflow-x: auto;
+  overflow-y: hidden;
+  cursor: ew-resize;
+}
+
+.studio-shell .studio-inspector {
+  min-width: 17.5rem;
+  max-width: 32.5rem;
+  resize: horizontal;
+  overflow-x: auto;
+  cursor: ew-resize;
+}
+
+.studio-shell .studio-canvas,
+.studio-shell .studio-frontier > div:first-child {
+  min-width: 18rem;
+}

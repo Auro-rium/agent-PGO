@@ -442,7 +442,7 @@ export const OptimizationFrontier: React.FC<OptimizationFrontierProps> = ({
       </div>
 
       {/* Right Column: Candidate Detailed Inspector */}
-      <div className="w-full md:w-80 lg:w-96 bg-[#090A0B] border-t md:border-t-0 md:border-l border-white/[0.06] p-4 flex flex-col justify-between overflow-y-auto shrink-0">
+      <div className="studio-inspector w-full md:w-80 lg:w-96 bg-[#090A0B] border-t md:border-t-0 md:border-l border-white/[0.06] p-4 flex flex-col justify-between overflow-y-auto shrink-0">
         <div className="space-y-4">
           {/* Header */}
           <div className="border-b border-white/[0.06] pb-3 flex items-center justify-between">

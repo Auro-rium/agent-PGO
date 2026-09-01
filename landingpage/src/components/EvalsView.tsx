@@ -139,7 +139,7 @@ export const EvalsView: React.FC<EvalsViewProps> = ({ project }) => {
 
       {/* Right: Selected Eval Deep Inspector */}
       {selectedCase && (
-        <div className="w-full md:w-84 lg:w-96 bg-[#090A0B] border border-white/[0.06] rounded-lg p-4 flex flex-col justify-between overflow-y-auto shrink-0 space-y-4">
+        <div className="studio-inspector w-full md:w-84 lg:w-96 bg-[#090A0B] border border-white/[0.06] rounded-lg p-4 flex flex-col justify-between overflow-y-auto shrink-0 space-y-4">
           <div className="space-y-4">
             <div className="border-b border-white/[0.05] pb-3">
               <div className="text-[9.5px] text-[#5C6268] uppercase tracking-wider">Eval Case Inspector</div>
