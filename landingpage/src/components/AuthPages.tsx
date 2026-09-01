@@ -1,6 +1,7 @@
 import React, { FormEvent, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, LockKeyhole, Mail, UserRound } from "lucide-react";
 import { createDemoSession, DemoSession, nameFromEmail, setDemoSession } from "../auth/demoAuth";
+import { api } from "../lib/api";
 
 interface AuthPageProps {
   mode: "signin" | "signup";
@@ -28,7 +29,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ mode, onAuthenticated }) => 
     if (transitionTimer.current !== null) window.clearTimeout(transitionTimer.current);
   }, []);
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const cleanEmail = email.trim().toLowerCase();
     if (isSignUp && !name.trim()) {
@@ -51,7 +52,17 @@ export const AuthPage: React.FC<AuthPageProps> = ({ mode, onAuthenticated }) => 
     setError("");
     setIsSubmitting(true);
     // Keep the demo transition immediate while yielding once for button feedback.
-    transitionTimer.current = window.setTimeout(() => {
+    transitionTimer.current = window.setTimeout(async () => {
+      // The local identity remains a demo convenience, but the API receives a
+      // short-lived server token at runtime. We deliberately do not embed one
+      // in the public Vite bundle. If the backend is unavailable, preserve the
+      // existing local-only flow for offline design work.
+      try {
+        const auth = await api.demoSignIn();
+        if (auth.accessToken) window.sessionStorage.setItem("twinerun.access-token", auth.accessToken);
+      } catch {
+        // Keep the frontend demo usable while the API is not running locally.
+      }
       const session = createDemoSession(isSignUp ? name : nameFromEmail(cleanEmail), cleanEmail);
       setDemoSession(session);
       onAuthenticated(session);

@@ -58,6 +58,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 const json = (value: unknown): RequestInit => ({ method: "POST", body: JSON.stringify(value) });
 
 export const api = {
+  async demoSignIn(): Promise<{ accessToken: string; tokenType: string; expiresIn: number }> {
+    return request("/auth/demo", json({}));
+  },
   async me(): Promise<Record<string, unknown>> { return request<Record<string, unknown>>("/me"); },
   async signIn(email: string, password: string): Promise<Record<string, unknown>> { return request("/auth/signin", json({ email, password })); },
   async signUp(name: string, email: string, password: string): Promise<Record<string, unknown>> { return request("/auth/signup", json({ name, email, password })); },
