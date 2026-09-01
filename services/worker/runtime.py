@@ -393,6 +393,21 @@ class WorkerRuntime:
     def _default_candidate_executor(candidate: dict[str, Any], _job: Job) -> dict[str, Any]:
         return dict(candidate)
 
+    @staticmethod
+    def _quality_samples(value: Any) -> tuple[float, ...] | None:
+        """Return paired quality samples when a result explicitly provides them."""
+
+        if not isinstance(value, dict) or "quality_samples" not in value:
+            return None
+        samples = value["quality_samples"]
+        if not isinstance(samples, (list, tuple)):
+            raise ValueError("quality_samples must be a list")
+        return tuple(float(sample) for sample in samples)
+
+    @staticmethod
+    def _optimization_config_value(config: dict[str, Any], gate_config: dict[str, Any], key: str, default: Any) -> Any:
+        return gate_config.get(key, config.get(key, default))
+
     def process_once(self) -> bool:
         messages = self.queue.receive(max_messages=1, visibility_timeout=self.visibility_timeout)
         if not messages:
@@ -561,13 +576,70 @@ class WorkerRuntime:
             typed = []
             for row in rows:
                 value = row.result
-                typed.append(Candidate(id=row.candidate_id, cost_usd=float(value.get("cost_usd", 0.0)), latency_ms=float(value.get("latency_ms", 0.0)), quality=float(value.get("quality", value.get("score", 0.0))), config={k: value[k] for k in ("provider", "model", "parameters") if k in value}))
+                candidate_config = value.get("config", {})
+                if not isinstance(candidate_config, dict):
+                    candidate_config = {}
+                candidate_config = dict(candidate_config)
+                candidate_config.update({k: value[k] for k in ("provider", "model", "parameters") if k in value})
+                typed.append(Candidate(id=row.candidate_id, cost_usd=float(value.get("cost_usd", 0.0)), latency_ms=float(value.get("latency_ms", 0.0)), quality=float(value.get("quality", value.get("score", 0.0))), config=candidate_config))
             max_latency = cfg.get("max_p95_latency_ms", cfg.get("max_latency_ms"))
             max_cost = cfg.get("max_cost_usd")
-            eligible = pareto_frontier(typed, max_latency_ms=max_latency, max_cost_usd=max_cost)
+            baseline = cfg.get("baseline")
+            baseline_samples = self._quality_samples(baseline)
+            if baseline_samples is None and "baseline_quality_samples" in cfg:
+                baseline_samples = self._quality_samples({"quality_samples": cfg["baseline_quality_samples"]})
+            baseline_quality = baseline.get("quality") if isinstance(baseline, dict) else None
+            if baseline_quality is None and baseline_samples:
+                baseline_quality = sum(baseline_samples) / len(baseline_samples)
+
+            # Retrospective staged selection records bounded sensitivity,
+            # beam, and halving decisions without replaying provider calls.
+            from services.optimizer.staged import StagedOptimizer
+            staged = StagedOptimizer(evaluate=lambda candidate, _budget: candidate.quality).optimize(
+                typed,
+                beam_width=int(cfg.get("beam_width", 3)),
+                halving_rounds=int(cfg.get("halving_rounds", 2)),
+                initial_budget=int(cfg.get("initial_budget", 1)),
+                baseline_quality=baseline_quality,
+                max_quality_regression=float(cfg.get("max_quality_regression", 0.0)),
+                max_latency_ms=max_latency,
+                max_cost_usd=max_cost,
+            )
+            stage_payload = [{"name": stage.name, "candidate_ids": list(stage.candidate_ids), "budget": stage.budget} for stage in staged.stages]
+            gate_config = cfg.get("statistical_gate")
+            gate_config = gate_config if isinstance(gate_config, dict) else {}
+            gate_payload: list[dict[str, Any]] = []
+            gate_enabled = baseline_samples is not None
+            if gate_enabled:
+                from services.optimizer.gates import StatisticalGate
+                gate = StatisticalGate(
+                    min_quality_delta=float(self._optimization_config_value(cfg, gate_config, "min_quality_delta", 0.0)),
+                    alpha=float(self._optimization_config_value(cfg, gate_config, "alpha", 0.05)),
+                    min_samples_for_significance=int(self._optimization_config_value(cfg, gate_config, "min_samples_for_significance", 5)),
+                    max_quality_regression=float(self._optimization_config_value(cfg, gate_config, "max_quality_regression", 0.0)),
+                )
+                for row in rows:
+                    samples = self._quality_samples(row.result)
+                    if samples is None:
+                        gate_payload.append({"candidate_id": row.candidate_id, "accepted": False, "reason": "candidate quality_samples are required"})
+                        continue
+                    result = gate.test(baseline_samples, samples)
+                    gate_payload.append({"candidate_id": row.candidate_id, "accepted": result.accepted, "mean_delta": result.mean_delta, "p_value": result.p_value, "reason": result.reason, "confidence_interval": list(result.confidence_interval)})
+            gate_by_id = {item["candidate_id"]: item for item in gate_payload}
+            stage_ids = set(staged.stages[-1].candidate_ids)
+            if gate_enabled:
+                stage_pool = [candidate for candidate in typed if candidate.id in stage_ids and gate_by_id.get(candidate.id, {}).get("accepted")]
+                if not stage_pool:
+                    raise ValueError("no staged candidate passed the statistical quality gate")
+            else:
+                stage_pool = [candidate for candidate in typed if candidate.id in stage_ids]
+            eligible = pareto_frontier(stage_pool, max_latency_ms=max_latency, max_cost_usd=max_cost)
             chosen = recommend(eligible, max_latency_ms=max_latency, max_cost_usd=max_cost)
-            recommendation = {"id": chosen.id, "config": chosen.config, "metrics": {"quality": chosen.quality, "latency_ms": chosen.latency_ms, "cost_usd": chosen.cost_usd}, "gates": {"quality": "pass", "latency": "pass", "spend": "pass"}}
-            if self.repository.persist_optimization_result(job.id, recommendation, metadata={"candidate_count": len(rows)}, worker_id=self.worker_id, lease_token=self._lease_token) is None:
+            recommendation = {"id": chosen.id, "config": chosen.config, "metrics": {"quality": chosen.quality, "latency_ms": chosen.latency_ms, "cost_usd": chosen.cost_usd}, "gates": {"quality": "pass", "latency": "pass", "spend": "pass", "statistical": "pass" if gate_enabled else "not_run"}}
+            aggregate["optimization"] = {"stages": stage_payload, "statistical_gate": gate_payload, "selected_stage": staged.stages[-1].name}
+            if self.repository.set_result(job.id, aggregate, worker_id=self.worker_id, lease_token=self._lease_token) is None:
+                raise LeaseLostError(job.id)
+            if self.repository.persist_optimization_result(job.id, recommendation, metadata={"candidate_count": len(rows), "stages": stage_payload, "statistical_gate": gate_payload}, worker_id=self.worker_id, lease_token=self._lease_token) is None:
                 raise LeaseLostError(job.id)
         if self.repository.transition(job.id, JobState.COMPLETED, worker_id=self.worker_id, lease_token=self._lease_token) is None:
             raise LeaseLostError(job.id)

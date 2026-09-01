@@ -77,6 +77,60 @@ def test_worker_checkpoints_candidates_and_is_idempotent(tmp_path) -> None:
         assert len(row.candidate_results) == 2
 
 
+def test_worker_wires_staged_selection_and_paired_statistical_gate(tmp_path) -> None:
+    factory = create_session_factory(f"sqlite:///{tmp_path / 'optimizer.db'}")
+    create_tables(factory)
+    with factory.begin() as session:
+        organization = Organization(name="Acme")
+        session.add(organization)
+        session.flush()
+        job = Job(
+            organization_id=organization.id,
+            kind="optimization",
+            payload={
+                "config": {
+                    "baseline": {"id": "baseline", "quality": 0.0, "quality_samples": [0, 0, 0, 0, 0]},
+                    "beam_width": 2,
+                    "halving_rounds": 1,
+                    "initial_budget": 1,
+                    "statistical_gate": {"min_quality_delta": 0.1, "min_samples_for_significance": 5},
+                    "candidates": [{"id": "good", "cost_usd": 0.1}, {"id": "neutral", "cost_usd": 0.1}],
+                }
+            },
+            max_experiment_cost_usd=1,
+        )
+        session.add(job)
+        session.flush()
+        job_id = job.id
+
+    queue = InMemoryQueue()
+    queue.publish(job_id, {})
+
+    def execute(candidate: dict) -> dict:
+        samples = [1, 1, 1, 1, 1] if candidate["id"] == "good" else [0, 0, 0, 0, 0]
+        return {"quality": sum(samples) / len(samples), "quality_samples": samples, "cost_usd": 0.1, "latency_ms": 10}
+
+    runtime = WorkerRuntime(factory, queue, worker_id="optimizer-worker", candidate_executor=execute)
+    assert runtime.process_once() is True
+
+    with factory() as session:
+        row = session.get(Job, job_id)
+        assert row is not None
+        assert row.status == JobState.COMPLETED.value
+        assert [stage["name"] for stage in row.result["optimization"]["stages"]] == [
+            "sensitivity",
+            "beam",
+            "successive_halving",
+        ]
+        gates = {item["candidate_id"]: item for item in row.result["optimization"]["statistical_gate"]}
+        assert gates["good"]["accepted"] is True
+        assert gates["neutral"]["accepted"] is False
+        assert row.result["recommendation"]["id"] == "good"
+        assert row.result["recommendation"]["gates"]["statistical"] == "pass"
+        assert row.optimization_result is not None
+        assert row.optimization_result.metadata_json["stages"] == row.result["optimization"]["stages"]
+
+
 def test_worker_moves_poison_message_to_dlq_after_bounded_receives(tmp_path) -> None:
     factory = create_session_factory(f"sqlite:///{tmp_path / 'jobs.db'}")
     create_tables(factory)
