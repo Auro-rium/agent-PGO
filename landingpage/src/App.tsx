@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   ViewMode, 
   AgentProject, 
@@ -26,6 +26,7 @@ import { ExportModal } from './components/ExportModal';
 import { IntegrationsModal } from './components/IntegrationsModal';
 import { SettingsModal } from './components/SettingsModal';
 import { SettingsView } from './components/SettingsView';
+import { DemoSession } from './auth/demoAuth';
 
 const studioViewFromHash = (): ViewMode => {
   const value = window.location.hash.replace(/^#studio\/?/, "").replace(/\/$/, "");
@@ -33,7 +34,14 @@ const studioViewFromHash = (): ViewMode => {
   return 'graph';
 };
 
-export default function App() {
+interface AppProps {
+  session?: DemoSession;
+  onLogout?: () => void;
+  onOpenProfile?: () => void;
+}
+
+export default function App({ session, onLogout, onOpenProfile }: AppProps) {
+  const activeSession: DemoSession = session || { name: "TwineRun User", email: "", initials: "TR", authenticatedAt: "" };
   const [currentView, setCurrentView] = useState<ViewMode>(studioViewFromHash);
   const [project, setProject] = useState<AgentProject>(RESEARCH_PROJECT);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -61,6 +69,14 @@ export default function App() {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isIntegrationsModalOpen, setIsIntegrationsModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const optimizationTimerRef = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (optimizationTimerRef.current !== null) {
+      window.clearTimeout(optimizationTimerRef.current);
+      optimizationTimerRef.current = null;
+    }
+  }, []);
 
   // Selected node object
   const selectedNode = project.nodes.find((n) => n.id === selectedNodeId) || null;
@@ -109,6 +125,10 @@ export default function App() {
   // Run the live PGO optimization sequence
   const runOptimizationSimulation = () => {
     if (isOptimizing) return;
+    if (optimizationTimerRef.current !== null) {
+      window.clearTimeout(optimizationTimerRef.current);
+      optimizationTimerRef.current = null;
+    }
     
     // Reset to baseline models before starting simulation
     setProject((prev) => ({
@@ -335,10 +355,16 @@ export default function App() {
       }
 
       currentStep++;
-      setTimeout(runNextStep, step.delay);
+      optimizationTimerRef.current = window.setTimeout(() => {
+        optimizationTimerRef.current = null;
+        runNextStep();
+      }, step.delay);
     };
 
-    setTimeout(runNextStep, 500);
+    optimizationTimerRef.current = window.setTimeout(() => {
+      optimizationTimerRef.current = null;
+      runNextStep();
+    }, 500);
   };
 
   // Switch Active Project
@@ -377,6 +403,9 @@ export default function App() {
     <div className="studio-shell flex h-screen w-screen bg-[#050505] text-[#D6D9DC] overflow-hidden font-sans select-none relative">
       {/* 1. Slim Left Navigation Rail */}
       <NavigationRail
+        session={activeSession}
+        onLogout={onLogout || (() => {})}
+        onOpenProfile={onOpenProfile || (() => {})}
         currentView={currentView}
         onViewChange={handleViewChange}
         onOpenIntegrations={() => setIsIntegrationsModalOpen(true)}

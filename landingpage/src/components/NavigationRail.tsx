@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useResizableWidth } from '../hooks/useResizableWidth';
 import { PanelResizeHandle } from './PanelResizeHandle';
 import { ViewMode } from '../types';
+import { DemoSession } from '../auth/demoAuth';
 import { 
   Network, 
   Activity, 
@@ -14,6 +15,9 @@ import {
 } from 'lucide-react';
 
 interface NavigationRailProps {
+  session: DemoSession;
+  onLogout: () => void;
+  onOpenProfile: () => void;
   currentView: ViewMode;
   onViewChange: (view: ViewMode) => void;
   onOpenIntegrations: () => void;
@@ -23,6 +27,9 @@ interface NavigationRailProps {
 }
 
 export const NavigationRail: React.FC<NavigationRailProps> = ({
+  session,
+  onLogout,
+  onOpenProfile,
   currentView,
   onViewChange,
   onOpenIntegrations,
@@ -30,6 +37,20 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
   onOpenCommandPalette,
   isOptimizing
 }) => {
+  const [profileOpen, setProfileOpen] = useState(false);
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setProfileOpen(false); };
+    const closeOutside = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest('#nav-profile-control')) setProfileOpen(false);
+    };
+    window.addEventListener('keydown', close);
+    document.addEventListener('pointerdown', closeOutside);
+    return () => {
+      window.removeEventListener('keydown', close);
+      document.removeEventListener('pointerdown', closeOutside);
+    };
+  }, []);
   const { width, startResize } = useResizableWidth(68, 56, 120);
   const navItems = [
     {
@@ -71,23 +92,33 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
 
   return (
     <aside className="studio-rail w-13 shrink-0 bg-[#090A0B] border-r border-white/[0.06] flex flex-col items-center justify-between py-3 z-30 select-none" style={{ width, flex: "0 0 auto" }}>
-      {/* Top Logo */}
-      <div className="flex flex-col items-center gap-3">
+      {/* Account control replaces the former brand mark in the studio rail. */}
+      <div id="nav-profile-control" className="relative flex flex-col items-center gap-3">
         <button
-          id="nav-logo-btn"
-          onClick={() => onViewChange('graph')}
-          className="relative group p-1.5 rounded hover:bg-white/[0.04] transition-colors focus:outline-none"
-          title="twinerun — Profile-Guided Optimizer"
+          id="nav-profile-btn"
+          onClick={() => setProfileOpen((open) => !open)}
+          className="relative group p-1.5 rounded hover:bg-white/[0.04] transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-white/50"
+          title="Open profile menu"
+          aria-haspopup="menu"
+          aria-expanded={profileOpen}
         >
-          <div className="w-8 h-8 rounded bg-[#0F1113] border border-white/[0.08] flex items-center justify-center text-[#F2F3F4] group-hover:border-white/[0.2] transition-all">
-            <img src="/twinerun-logo.png" alt="TwineRun" className="studio-rail-logo" draggable="false" />
+          <div className="w-8 h-8 rounded-full bg-[#F2F3F4] text-[#050505] border border-white/[0.2] flex items-center justify-center text-[10px] font-semibold font-mono group-hover:bg-white transition-all">
+            {session.initials}
           </div>
-          {isOptimizing && (
-            <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-[#F2F3F4] animate-ping" />
-          )}
+          {isOptimizing && <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-[#F2F3F4] animate-ping" />}
         </button>
-
+        {profileOpen && (
+          <div className="absolute left-full top-0 ml-3 w-60 rounded-lg border border-white/[0.12] bg-[#0F1113] p-2 shadow-2xl z-[90]" role="menu">
+            <div className="px-2 py-2 border-b border-white/[0.06]">
+              <div className="text-xs font-semibold text-[#F2F3F4] truncate">{session.name}</div>
+              <div className="text-[10px] text-[#5C6268] truncate">{session.email}</div>
+            </div>
+            <button type="button" role="menuitem" onClick={() => { setProfileOpen(false); onOpenProfile(); }} className="w-full mt-1 rounded px-2 py-2 text-left text-xs text-[#D7DADD] hover:bg-white/[0.05]">Profile</button>
+            <button type="button" role="menuitem" onClick={() => { setProfileOpen(false); onLogout(); }} className="w-full rounded px-2 py-2 text-left text-xs text-[#D7DADD] hover:bg-white/[0.05]">Log out</button>
+          </div>
+        )}
         <div className="w-5 h-[1px] bg-white/[0.06]" />
+      </div>
 
         {/* Primary View Navigation */}
         <nav className="flex flex-col items-center gap-1">
@@ -125,7 +156,6 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
             );
           })}
         </nav>
-      </div>
 
       {/* Bottom Utility Navigation */}
       <div className="flex flex-col items-center gap-1.5">

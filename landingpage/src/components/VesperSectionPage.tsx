@@ -140,7 +140,7 @@ function Header({ onLaunchStudio }: { onLaunchStudio: () => void }) {
           ))}
         </nav>
         <div className="vesper-header-actions">
-          <a href="#studio" className="vesper-sign-in" onClick={onLaunchStudio}>
+          <a href="#signin" className="vesper-sign-in" onClick={onLaunchStudio}>
             Sign in
           </a>
           <button

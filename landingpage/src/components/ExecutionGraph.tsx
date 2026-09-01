@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { AgentProject } from '../types';
 import { 
   ZoomIn, 
@@ -38,10 +38,42 @@ export const ExecutionGraph: React.FC<ExecutionGraphProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 30, y: 25 });
-  const [isPanning, setIsPanning] = useState(false);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  const [draggedNode, setDraggedNode] = useState<string | null>(null);
   const [nodePositions, setNodePositions] = useState<Record<string, { x: number; y: number }>>({});
+  const panRef = useRef(pan);
+  const zoomRef = useRef(zoom);
+  const nodePositionsRef = useRef(nodePositions);
+  const dragRef = useRef<{
+    type: 'pan' | 'node';
+    startX: number;
+    startY: number;
+    startPan?: { x: number; y: number };
+    nodeId?: string;
+    startNode?: { x: number; y: number };
+  } | null>(null);
+  const frameRef = useRef<number | null>(null);
+  const pendingPanRef = useRef<{ x: number; y: number } | null>(null);
+  const pendingNodeRef = useRef<{ id: string; position: { x: number; y: number } } | null>(null);
+
+  const scheduleFrame = useCallback(() => {
+    if (frameRef.current !== null) return;
+    frameRef.current = window.requestAnimationFrame(() => {
+      frameRef.current = null;
+
+      if (pendingPanRef.current) {
+        const nextPan = pendingPanRef.current;
+        pendingPanRef.current = null;
+        panRef.current = nextPan;
+        setPan(nextPan);
+      }
+
+      if (pendingNodeRef.current) {
+        const { id, position } = pendingNodeRef.current;
+        pendingNodeRef.current = null;
+        nodePositionsRef.current = { ...nodePositionsRef.current, [id]: position };
+        setNodePositions(nodePositionsRef.current);
+      }
+    });
+  }, []);
 
   // Initialize node positions from project
   useEffect(() => {
@@ -49,39 +81,53 @@ export const ExecutionGraph: React.FC<ExecutionGraphProps> = ({
     project.nodes.forEach((n) => {
       initialPos[n.id] = { x: n.x, y: n.y };
     });
+    nodePositionsRef.current = initialPos;
     setNodePositions(initialPos);
-  }, [project]);
+  }, [project.id]);
+
+  useEffect(() => () => {
+    if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
+  }, []);
 
   // Handle Pan canvas
   const handleMouseDown = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('.graph-node-card')) return;
-    setIsPanning(true);
-    setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+    dragRef.current = {
+      type: 'pan',
+      startX: e.clientX,
+      startY: e.clientY,
+      startPan: panRef.current
+    };
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (isPanning) {
-      setPan({
-        x: e.clientX - dragStart.x,
-        y: e.clientY - dragStart.y
-      });
-    } else if (draggedNode) {
-      setNodePositions((prev) => ({
-        ...prev,
-        [draggedNode]: {
-          x: Math.max(20, (e.clientX - pan.x) / zoom - 110),
-          y: Math.max(20, (e.clientY - pan.y) / zoom - 60)
+    const drag = dragRef.current;
+    if (!drag) return;
+
+    if (drag.type === 'pan' && drag.startPan) {
+      pendingPanRef.current = {
+        x: drag.startPan.x + e.clientX - drag.startX,
+        y: drag.startPan.y + e.clientY - drag.startY
+      };
+    } else if (drag.type === 'node' && drag.nodeId && drag.startNode) {
+      pendingNodeRef.current = {
+        id: drag.nodeId,
+        position: {
+          x: Math.max(20, drag.startNode.x + (e.clientX - drag.startX) / zoomRef.current),
+          y: Math.max(20, drag.startNode.y + (e.clientY - drag.startY) / zoomRef.current)
         }
-      }));
+      };
     }
+    scheduleFrame();
   };
 
   const handleMouseUp = () => {
-    setIsPanning(false);
-    setDraggedNode(null);
+    dragRef.current = null;
   };
 
   const resetView = () => {
+    panRef.current = { x: 30, y: 25 };
+    zoomRef.current = 1;
     setZoom(1);
     setPan({ x: 30, y: 25 });
   };
@@ -116,7 +162,7 @@ export const ExecutionGraph: React.FC<ExecutionGraphProps> = ({
       {/* Top Right Zoom Controls */}
       <div className="absolute top-3 right-4 z-10 flex items-center gap-0.5 bg-[#090A0B]/90 backdrop-blur border border-white/[0.06] p-0.5 rounded">
         <button
-          onClick={() => setZoom((z) => Math.min(1.6, z + 0.1))}
+          onClick={() => setZoom((z) => { const next = Math.min(1.6, z + 0.1); zoomRef.current = next; return next; })}
           className="p-1.5 rounded text-[#5C6268] hover:text-[#D7DADD] hover:bg-white/[0.04] transition-colors"
           title="Zoom In"
         >
@@ -126,7 +172,7 @@ export const ExecutionGraph: React.FC<ExecutionGraphProps> = ({
           {Math.round(zoom * 100)}%
         </span>
         <button
-          onClick={() => setZoom((z) => Math.max(0.6, z - 0.1))}
+          onClick={() => setZoom((z) => { const next = Math.max(0.6, z - 0.1); zoomRef.current = next; return next; })}
           className="p-1.5 rounded text-[#5C6268] hover:text-[#D7DADD] hover:bg-white/[0.04] transition-colors"
           title="Zoom Out"
         >
@@ -269,7 +315,14 @@ export const ExecutionGraph: React.FC<ExecutionGraphProps> = ({
               }}
               onMouseDown={(e) => {
                 e.stopPropagation();
-                setDraggedNode(node.id);
+                const startNode = nodePositionsRef.current[node.id] || { x: node.x, y: node.y };
+                dragRef.current = {
+                  type: 'node',
+                  startX: e.clientX,
+                  startY: e.clientY,
+                  nodeId: node.id,
+                  startNode
+                };
               }}
               onClick={(e) => {
                 e.stopPropagation();
