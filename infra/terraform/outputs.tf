@@ -1,3 +1,8 @@
+output "api_gateway_invoke_url" {
+  description = "HTTPS invoke URL for the API Gateway HTTP API bridge."
+  value       = aws_apigatewayv2_stage.default.invoke_url
+}
+
 output "api_url" {
   description = "API URL. Temporary HTTP mode returns the ALB DNS endpoint; production mode returns the HTTPS domain."
   value       = var.temporary_http ? "http://${aws_lb.api.dns_name}" : "https://${var.domain_name}"
