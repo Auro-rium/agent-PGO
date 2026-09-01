@@ -1,0 +1,54 @@
+.vesper-route-page { display: block; min-height: 100dvh; overflow: visible; background: #000; }
+.vesper-route-page .vesper-photo { position: fixed; opacity: .32; }
+.vesper-route-header { position: sticky; top: 0; background: linear-gradient(180deg, rgba(0,0,0,.94), rgba(0,0,0,.58), transparent); backdrop-filter: blur(10px); }
+.vesper-route-main { position: relative; z-index: 1; }
+.vesper-route-hero { max-width: 930px; margin: 0 auto; padding: 130px 40px 115px; text-align: center; }
+.vesper-route-hero h1 { color: #f7f7f7; font: 500 clamp(46px, 7vw, 90px)/1.02 Inter, sans-serif; letter-spacing: -.065em; }
+.vesper-route-hero > p:not(.vesper-eyebrow) { max-width: 650px; margin: 24px auto 0; color: #969696; font-size: 17px; line-height: 1.65; }
+.vesper-route-hero .vesper-btn { margin-top: 30px; }
+.vesper-route-content { max-width: 1240px; margin: 0 auto; padding: 0 40px 150px; }
+.vesper-route-content::before { content: ''; display: block; height: 1px; margin-bottom: 78px; background: linear-gradient(90deg, transparent, rgba(255,255,255,.22), transparent); }
+.vesper-route-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; border: 1px solid rgba(255,255,255,.15); background: rgba(255,255,255,.15); }
+.vesper-route-card { min-height: 300px; padding: 28px; background: rgba(5,5,5,.92); }
+.vesper-route-card h2 { margin-top: 78px; color: #f1f1f1; font-size: 25px; font-weight: 500; letter-spacing: -.04em; }
+.vesper-route-card p { max-width: 470px; margin-top: 12px; color: #939393; font-size: 15px; line-height: 1.6; }
+.vesper-route-callout { margin-top: 28px; padding: 26px 28px; border-left: 2px solid #e8e8e8; color: #a7a7a7; font-size: 16px; line-height: 1.65; background: rgba(255,255,255,.045); }
+.vesper-route-callout strong { color: #f1f1f1; font-weight: 500; }
+.vesper-route-steps { border-top: 1px solid rgba(255,255,255,.16); }
+.vesper-route-step { display: grid; grid-template-columns: 75px 1fr minmax(280px, .75fr); gap: 30px; padding: 34px 0; border-bottom: 1px solid rgba(255,255,255,.14); }
+.vesper-route-step h2 { color: #f1f1f1; font-size: 23px; font-weight: 500; letter-spacing: -.04em; }
+.vesper-route-step p { max-width: 510px; margin-top: 11px; color: #929292; font-size: 15px; line-height: 1.6; }
+.vesper-route-step pre { margin: 0; padding: 16px 18px; border-left: 1px solid rgba(255,255,255,.22); color: #c1c1c1; background: rgba(255,255,255,.035); font: 12px/1.8 JetBrains Mono, monospace; white-space: pre-wrap; }
+.vesper-route-faqs { max-width: 900px; margin: 0 auto; }
+.vesper-route-page .vesper-pricing-grid { margin-top: 0; }
+.vesper-route-page .vesper-price-card h2 { margin-top: 34px; color: #f5f5f5; font-size: 42px; font-weight: 500; letter-spacing: -.07em; }
+.vesper-route-page .vesper-sprint h2 { color: #f1f1f1; font-size: 22px; font-weight: 500; }
+
+@media (max-width: 900px) {
+  .vesper-route-hero { padding: 90px 20px 80px; }
+  .vesper-route-hero h1 { font-size: clamp(42px, 12vw, 64px); }
+  .vesper-route-content { padding: 0 20px 100px; }
+  .vesper-route-content::before { margin-bottom: 54px; }
+  .vesper-route-grid { grid-template-columns: 1fr; }
+  .vesper-route-card { min-height: 0; }
+  .vesper-route-card h2 { margin-top: 48px; }
+  .vesper-route-step { grid-template-columns: 45px 1fr; gap: 18px; }
+  .vesper-route-step pre { grid-column: 2; }
+}
+
+
+/* Benchmark frontier */
+.vesper-benchmark-route .vesper-demo-shell { margin-top: 0; }
+.vesper-benchmark-route .vesper-chart { min-height: 430px; }
+.vesper-benchmark-route .vesper-chart svg { height: 330px; }
+.vesper-benchmark-point { cursor: pointer; outline: none; }
+.vesper-benchmark-point circle { fill: #6f6f6f; transition: fill .2s ease, r .2s ease; }
+.vesper-benchmark-point:hover circle, .vesper-benchmark-point:focus-visible circle { fill: #d4d4d4; }
+.vesper-benchmark-point circle.is-selected { fill: #fff; stroke: #fff; stroke-width: 7; stroke-opacity: .18; }
+.vesper-benchmark-point circle.is-baseline { fill: #3f3f3f; }
+.vesper-benchmark-point circle.is-balanced { fill: #cfcfcf; }
+.vesper-benchmark-label { fill: #aaa; font: 10px JetBrains Mono, monospace; letter-spacing: .08em; }
+@media (max-width: 900px) {
+  .vesper-benchmark-route .vesper-chart { min-height: 350px; }
+  .vesper-benchmark-route .vesper-chart svg { height: 260px; }
+}

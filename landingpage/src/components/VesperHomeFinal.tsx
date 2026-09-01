@@ -1,0 +1,18 @@
+import React, { useEffect, useState } from 'react';
+import { ArrowRight, Menu, X } from 'lucide-react';
+
+interface Props { onLaunchStudio: () => void; }
+const links = [['benefits', 'Benefits'], ['how-it-works', 'How It Works'], ['benchmarks', 'Benchmarks'], ['faqs', 'FAQs'], ['pricing', 'Pricing']];
+const LogoMark = () => <img className="vesper-logo-image" src="/twinerun-logo.png" alt="TwineRun" />;
+
+export const VesperHomeFinal: React.FC<Props> = ({ onLaunchStudio }) => {
+  const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => { document.body.classList.toggle('vesper-menu-open', menuOpen); return () => document.body.classList.remove('vesper-menu-open'); }, [menuOpen]);
+  const close = () => setMenuOpen(false); const launch = () => { close(); onLaunchStudio(); };
+  return <div className="vesper-page vesper-home-page"><div className="vesper-grain" aria-hidden="true" /><div className="vesper-photo" aria-hidden="true"><video src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260818_072341_50851634-bbc3-4c33-9acc-7647d4db44aa.mp4" autoPlay loop muted playsInline preload="metadata" /></div><div className="vesper-backdrop" aria-hidden="true" onClick={close} />
+    <header className="vesper-header vesper-header--long vesper-home-header"><a href="#top" className="vesper-logo vesper-reveal vesper-reveal--scale" onClick={close} aria-label="TwineRun home"><LogoMark /></a><nav className="vesper-nav" aria-label="Primary navigation">{links.map(([id, label]) => <a key={id} href={`#${id}`} className="vesper-nav-link" onClick={close}>{label}</a>)}</nav><div className="vesper-header-actions"><a href="#studio" className="vesper-sign-in" onClick={launch}>Sign in</a><button className="vesper-btn vesper-btn--solid vesper-header-cta" onClick={launch}>Launch twinerun</button><button className="vesper-burger" onClick={() => setMenuOpen((open) => !open)} aria-controls="vesper-home-mobile-nav" aria-expanded={menuOpen} aria-label={menuOpen ? 'Close menu' : 'Open menu'}>{menuOpen ? <X size={18} /> : <Menu size={18} />}</button></div></header>
+    <nav id="vesper-home-mobile-nav" className="vesper-mobile-nav" aria-label="Mobile primary navigation">{links.map(([id, label]) => <a key={id} href={`#${id}`} className="vesper-mobile-link" onClick={close}>{label}</a>)}<button className="vesper-btn vesper-btn--solid vesper-mobile-cta" onClick={launch}>Launch twinerun <ArrowRight size={15} /></button></nav>
+    <main className="vesper-home-main" id="top"><section className="vesper-hero vesper-hero--home"><div className="vesper-copy"><div className="vesper-badge vesper-reveal vesper-reveal--pop">PROFILE-GUIDED OPTIMIZATION FOR AI AGENTS</div><h1><span className="vesper-headline-line vesper-reveal vesper-reveal--mask">Make your agents cheaper.</span><span className="vesper-headline-line vesper-reveal vesper-reveal--mask"><em>Without making them worse.</em></span></h1><p className="vesper-lede vesper-reveal vesper-reveal--soft">twinerun profiles your agent, tests cheaper model configurations against your evals, and returns the lowest-cost execution plan that stays inside your quality bounds.</p><div className="vesper-actions"><button className="vesper-btn vesper-btn--solid vesper-hero-btn vesper-reveal vesper-reveal--btn" onClick={launch}>Optimize an Agent <ArrowRight size={15} /></button></div><p className="vesper-proof-line">Offline optimization <span>·</span> No production changes without approval</p></div></section></main>
+  </div>;
+};
+

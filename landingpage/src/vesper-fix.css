@@ -1,0 +1,20 @@
+/* The backdrop is an overlay, never a layout row. */
+.vesper-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  background: rgba(8, 8, 8, .42);
+  transition: opacity .28s ease, visibility .28s ease;
+}
+
+body.vesper-menu-open .vesper-backdrop {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+

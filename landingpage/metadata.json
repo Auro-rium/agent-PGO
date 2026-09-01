@@ -1,0 +1,7 @@
+{
+  "name": "TwineRun",
+  "description": "Operational AI infrastructure for training and deploying adaptive agents on business workflows.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["AGENT_WORKFLOW_OPTIMIZATION", "LAMBDA_FUNCTION_URL_DELIVERY"]
+}
+

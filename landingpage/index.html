@@ -1,87 +1,21 @@
-<!DOCTYPE html>
-<html lang="en" class="scroll-smooth">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#050505">
-  <title>AgentPGO — Optimize AI Agent Cost & Performance</title>
-  <meta name="description" content="Profile-guided optimization for AI agents. Reduce inference cost and latency while preserving task quality.">
-  <meta property="og:type" content="website">
-  <meta property="og:title" content="AgentPGO — Optimize AI Agent Cost & Performance">
-  <meta property="og:description" content="Profile-guided optimization for AI agents. Reduce inference cost and latency while preserving task quality.">
-  <meta name="twitter:card" content="summary_large_image">
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://code.iconify.design/iconify-icon/1.0.7/iconify-icon.min.js"></script>
-  <link href="https://api.fontshare.com/v2/css?f[]=archivo@300,400,500,600&display=swap" rel="stylesheet">
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <script>
-    tailwind.config = { theme: { extend: {
-      colors: { graphite: {900:'#050505',800:'#080808',700:'#141414',600:'#262626',muted:'#888888'}, silver:{light:'#f5f5f5',dark:'#a1a1aa',border:'rgba(224,224,224,.15)'} },
-      fontFamily:{sans:['Archivo','sans-serif'],mono:['JetBrains Mono','monospace']},
-      backgroundImage:{'radial-glow':'radial-gradient(circle at center,rgba(255,255,255,.03) 0%,rgba(5,5,5,0) 60%)','metallic-shine':'linear-gradient(110deg,transparent 20%,rgba(255,255,255,.1) 40%,rgba(255,255,255,.4) 50%,rgba(255,255,255,.1) 60%,transparent 80%)'},
-      animation:{'fade-in-up':'fadeInUp .6s cubic-bezier(.16,1,.3,1) forwards','pulse-fast':'pulseOpacity 1.5s ease-in-out infinite','shine':'shine 4s ease-in-out infinite','data-flow':'dataFlow 2s linear infinite','data-flow-fast':'dataFlow 1s linear infinite'},
-      keyframes:{fadeInUp:{'0%':{opacity:'0',transform:'translateY(15px)'},'100%':{opacity:'1',transform:'translateY(0)'}},pulseOpacity:{'0%,100%':{opacity:'.3'},'50%':{opacity:'1',filter:'drop-shadow(0 0 4px rgba(255,255,255,.8))'}},shine:{'0%':{backgroundPosition:'200% center'},'100%':{backgroundPosition:'-200% center'}},dataFlow:{'0%':{transform:'translateY(-100%)',opacity:'0'},'20%':{opacity:'1'},'80%':{opacity:'1'},'100%':{transform:'translateY(400px)',opacity:'0'}}}
-    }}};
-  </script>
-  <style>
-    .noise-bg::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:50;opacity:.04;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")}
-    .btn-machined{position:relative;transition:all .15s cubic-bezier(.16,1,.3,1);box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 1px 2px rgba(0,0,0,.4)}
-    .btn-machined:hover{background-color:#1a1a1a;border-color:rgba(255,255,255,.3);box-shadow:inset 0 1px 0 rgba(255,255,255,.15),0 2px 8px rgba(0,0,0,.5);transform:translateY(-1px)}
-    .btn-machined:active{transform:translateY(0);box-shadow:inset 0 1px 4px rgba(0,0,0,.8)}
-    .btn-light:hover{background:#fff!important;color:#050505!important}
-    .text-metallic{background:linear-gradient(180deg,#fff 0%,#a1a1aa 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-    .delay-50{animation-delay:50ms}.delay-100{animation-delay:100ms}.delay-150{animation-delay:150ms}.delay-200{animation-delay:200ms}.delay-250{animation-delay:250ms}.delay-300{animation-delay:300ms}.delay-350{animation-delay:350ms}.node-transition{transition:all .3s cubic-bezier(.16,1,.3,1)}
-    @media(prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
-  </style>
-</head>
-<body class="bg-graphite-900 text-silver-light antialiased selection:bg-silver-light selection:text-graphite-900 overflow-x-hidden">
-<script>
-  const CALENDLY_URL='https://calendly.com/ishtrivedi18/30min?month=2026-09';
-  document.addEventListener('DOMContentLoaded',()=>document.querySelectorAll('.js-book-call').forEach(el=>el.addEventListener('click',e=>{e.preventDefault();window.open(CALENDLY_URL,'_blank','noopener,noreferrer')})));
-</script>
-<div class="noise-bg min-h-screen relative flex flex-col">
-  <div class="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[800px] bg-radial-glow opacity-50 pointer-events-none"></div>
-  <header class="w-full px-6 py-6 md:px-12 md:py-8 flex items-center justify-between z-10 opacity-0 animate-fade-in-up">
-    <span class="font-mono text-sm tracking-widest text-silver-light font-medium">AGENTPGO</span>
-    <a href="https://calendly.com/ishtrivedi18/30min?month=2026-09" class="js-book-call flex items-center gap-2 text-xs font-mono tracking-wider text-graphite-muted hover:text-silver-light transition-colors group"><span>Book a call</span><iconify-icon icon="lucide:arrow-right" class="group-hover:translate-x-1 transition-transform"></iconify-icon></a>
-  </header>
-  <main class="flex-1 flex flex-col xl:flex-row items-center justify-center w-full max-w-[1440px] mx-auto px-6 md:px-12 py-12 xl:py-0 gap-16 xl:gap-8 z-10">
-    <section class="w-full xl:w-1/2 flex flex-col justify-center max-w-2xl xl:pr-12"><div class="space-y-6">
-      <div class="opacity-0 animate-fade-in-up delay-50"><p class="font-mono text-[10px] sm:text-xs tracking-[0.2em] text-graphite-muted uppercase">Profile-guided optimization for AI agents</p></div>
-      <h1 class="text-4xl sm:text-5xl md:text-6xl lg:text-[4rem] leading-[1.1] font-medium tracking-tight opacity-0 animate-fade-in-up delay-100">Make your agent cheaper<br><span class="text-metallic relative inline-block overflow-hidden group">without making it dumber.<span class="absolute inset-0 bg-metallic-shine bg-[length:200%_auto] animate-shine opacity-0 group-hover:opacity-100 transition-opacity"></span></span></h1>
-      <p class="text-graphite-muted text-lg sm:text-xl leading-relaxed max-w-xl opacity-0 animate-fade-in-up delay-150">AgentPGO profiles how your agent actually runs, finds wasted model spend and context, then searches for a faster, lower-cost execution policy without sacrificing task quality.</p>
-      <div class="pt-4 flex flex-col sm:flex-row items-start sm:items-center gap-4 opacity-0 animate-fade-in-up delay-200"><button class="js-book-call btn-machined bg-graphite-800 border border-silver-border text-silver-light px-6 py-3 rounded-[10px] font-mono text-sm tracking-wide flex items-center justify-center gap-2 min-w-[240px]">Book an optimization call</button><span class="text-graphite-muted font-mono text-xs tracking-wider">For builders shipping real agents.</span></div>
-    </div></section>
-    <section class="w-full xl:w-1/2 flex items-center justify-center xl:justify-end opacity-0 animate-fade-in-up delay-250" aria-label="Agent optimization profiler visualization"><div class="relative w-full max-w-lg border border-silver-border rounded-xl bg-graphite-900/50 backdrop-blur-sm p-6 sm:p-10 flex flex-col items-center overflow-hidden">
-      <div class="w-full flex justify-between items-center font-mono text-[10px] tracking-widest text-graphite-muted mb-8 relative"><span id="pipe-trace">TRACE</span><iconify-icon icon="lucide:arrow-right" class="text-silver-border"></iconify-icon><span id="pipe-profile">PROFILE</span><iconify-icon icon="lucide:arrow-right" class="text-silver-border"></iconify-icon><span id="pipe-search">SEARCH</span><iconify-icon icon="lucide:arrow-right" class="text-silver-border"></iconify-icon><span id="pipe-verify">VERIFY</span><iconify-icon icon="lucide:arrow-right" class="text-silver-border"></iconify-icon><span id="pipe-optimize">OPTIMIZE</span></div>
-      <div class="w-full relative flex flex-col gap-4 mb-10">
-        <div class="absolute left-[40px] top-4 bottom-4 w-px bg-silver-border -z-10 overflow-hidden"><div class="absolute top-0 left-0 w-full h-[30px] bg-gradient-to-b from-transparent via-silver-light to-transparent animate-data-flow"></div><div class="absolute top-0 left-0 w-full h-[20px] bg-gradient-to-b from-transparent via-white to-transparent animate-data-flow-fast delay-75"></div></div>
-        <div class="flex items-center gap-4 w-full"><div class="w-2 h-2 rounded-full border border-silver-dark bg-graphite-900 z-10 shrink-0 ml-[36px]"></div><div class="flex-1 grid grid-cols-[1fr_2fr_1.5fr] gap-4 py-2 border-b border-silver-border/50 font-mono text-xs"><span class="text-silver-dark">PLAN</span><span class="text-silver-light">Claude Sonnet</span><span class="text-graphite-muted text-right flex flex-col items-end"><span>12.4k ctx</span><span class="text-[9px] text-silver-dark mt-0.5">0.8s · $0.04</span></span></div></div>
-        <div class="flex items-center gap-4 w-full relative"><div id="profiler-line" class="absolute -left-6 top-1/2 w-4 h-px bg-silver-dark/40 before:content-[''] before:absolute before:left-0 before:-top-1 before:w-2 before:h-2 before:bg-silver-dark/40 before:rounded-sm transition-opacity duration-300"></div><div id="dot-2" class="w-2 h-2 rounded-full border border-silver-light bg-silver-light z-10 shrink-0 ml-[36px] shadow-[0_0_8px_rgba(255,255,255,0.3)] transition-all duration-300"></div><div id="node-2" class="flex-1 grid grid-cols-[1fr_2fr_1.5fr] gap-4 py-2 border border-silver-border/80 bg-graphite-800/80 rounded pl-2 pr-0 font-mono text-xs relative overflow-hidden node-transition"><div id="node-2-highlight" class="absolute left-0 top-0 bottom-0 w-px bg-silver-light transition-all duration-300"></div><span class="text-silver-light">SEARCH</span><span class="text-silver-light flex flex-col"><span id="node-2-model">GPT mini</span><span id="node-2-old-model" class="text-[9px] text-graphite-muted line-through hidden">Opus</span></span><span class="text-silver-light text-right pr-2 flex flex-col items-end"><span id="node-2-ctx">3.2k ctx</span><span id="node-2-metrics" class="text-[9px] text-silver-dark mt-0.5">0.2s · $0.001</span></span></div></div>
-        <div class="flex items-center gap-4 w-full"><div class="w-2 h-2 rounded-full border border-silver-dark bg-graphite-900 z-10 shrink-0 ml-[36px]"></div><div id="node-3" class="flex-1 grid grid-cols-[1fr_2fr_1.5fr] gap-4 py-2 border-b border-silver-border/50 font-mono text-xs node-transition"><span class="text-silver-dark">REASON</span><span class="text-silver-light" id="node-3-model">Claude Opus</span><span class="text-graphite-muted text-right flex flex-col items-end"><span id="node-3-ctx">18.1k ctx</span><span id="node-3-metrics" class="text-[9px] text-silver-dark mt-0.5">2.4s · $0.27</span></span></div></div>
-        <div class="flex items-center gap-4 w-full"><div class="w-2 h-2 rounded-full border border-silver-dark bg-graphite-900 z-10 shrink-0 ml-[36px]"></div><div class="flex-1 grid grid-cols-[1fr_2fr_1.5fr] gap-4 py-2 font-mono text-xs"><span class="text-silver-dark">ANSWER</span><span class="text-silver-light">GPT mini</span><span class="text-graphite-muted text-right flex flex-col items-end"><span>2.1k ctx</span><span class="text-[9px] text-silver-dark mt-0.5">0.1s · $0.001</span></span></div></div>
-      </div>
-      <div class="w-full flex justify-between px-2 mb-6 font-mono text-[9px] text-graphite-muted uppercase tracking-wider items-center"><div class="flex gap-8"><span>MODEL</span><span>CONTEXT</span></div><div class="text-right flex flex-col items-end"><span>TOTAL ESTIMATE</span><span id="total-cost" class="text-silver-light text-xs font-medium transition-colors duration-300">$0.312 / run</span></div></div>
-      <div class="w-full pt-6 border-t border-silver-border/60 flex flex-col items-center gap-3"><div class="flex items-center gap-3 font-mono text-[11px] text-silver-dark"><span>Current policy</span><iconify-icon icon="lucide:arrow-right"></iconify-icon><span class="text-silver-light" id="policy-status">Candidate policy</span><iconify-icon icon="lucide:arrow-right"></iconify-icon><span>Quality gate</span></div><div id="objective-function" class="font-mono text-[10px] text-graphite-muted bg-graphite-800/50 px-3 py-1 rounded-full border border-silver-border/30 transition-all duration-300">minimize cost + latency subject to quality ≥ baseline</div></div>
-    </div></section>
-  </main>
-  <section class="w-full max-w-3xl mx-auto px-6 py-24 text-center z-10 opacity-0 animate-fade-in-up delay-300"><h2 class="text-2xl sm:text-3xl font-medium tracking-tight mb-6">I'm building this with real workloads.</h2><p class="text-graphite-muted text-base sm:text-lg mb-10 max-w-2xl mx-auto leading-relaxed">If you run an agent in production or spend meaningful money on inference, I want to profile it. Bring your traces, evals, or simply the system you're building.</p><div class="flex flex-col items-center gap-4"><button class="js-book-call btn-machined btn-light bg-silver-light text-graphite-900 border border-transparent px-6 py-2.5 rounded-[10px] font-mono text-sm tracking-wide flex items-center justify-center gap-2">Book a call <iconify-icon icon="lucide:arrow-right"></iconify-icon></button><span class="text-graphite-muted font-mono text-[11px] tracking-wider uppercase">Early design partners · Indie builders · AI teams</span></div></section>
-  <footer class="w-full px-6 py-8 md:px-12 flex flex-col sm:flex-row items-center justify-between border-t border-silver-border/40 z-10 mt-auto opacity-0 animate-fade-in-up delay-350"><div class="flex flex-col sm:flex-row items-center gap-2 sm:gap-6 font-mono text-[11px] tracking-widest text-graphite-muted uppercase mb-4 sm:mb-0"><span>AGENTPGO</span><span class="hidden sm:inline-block w-1 h-1 rounded-full bg-graphite-700"></span><span>2026</span></div><div class="font-mono text-[11px] text-graphite-muted flex flex-wrap items-center justify-center gap-3"><div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-green-500/80 animate-pulse-fast"></span><span>Building in public.</span></div><span class="text-graphite-700">·</span><a href="https://x.com/auroriumnexusand" target="_blank" rel="noopener noreferrer" class="hover:text-silver-light transition-colors">X</a><span class="text-graphite-700">·</span><a href="https://calendly.com/ishtrivedi18/30min?month=2026-09" target="_blank" rel="noopener noreferrer" class="hover:text-silver-light transition-colors">Calendly</a></div></footer>
-</div>
-<script>
-  document.addEventListener('DOMContentLoaded',()=>{
-    const ids=['trace','profile','search','verify','optimize']; const pipes=Object.fromEntries(ids.map(x=>[x,document.getElementById('pipe-'+x)]));
-    const n2Node=document.getElementById('node-2'),n2Model=document.getElementById('node-2-model'),n2OldModel=document.getElementById('node-2-old-model'),n2Ctx=document.getElementById('node-2-ctx'),n2Metrics=document.getElementById('node-2-metrics'),n2Dot=document.getElementById('dot-2'),n2Line=document.getElementById('node-2-highlight'),profilerLine=document.getElementById('profiler-line'),n3Node=document.getElementById('node-3'),n3Model=document.getElementById('node-3-model'),n3Ctx=document.getElementById('node-3-ctx'),n3Metrics=document.getElementById('node-3-metrics'),totalCost=document.getElementById('total-cost'),policyStatus=document.getElementById('policy-status'),objFunc=document.getElementById('objective-function');
-    const wait=ms=>new Promise(r=>setTimeout(r,ms)); const reset=()=>Object.values(pipes).forEach(el=>el.className='transition-colors duration-300 text-graphite-muted');
-    async function cycle(){
-      reset(); pipes.trace.className='transition-colors duration-300 text-silver-light font-medium'; profilerLine.classList.add('opacity-0'); n2Model.textContent='Claude Opus'; n2OldModel.classList.add('hidden'); n2Ctx.textContent='14.2k ctx'; n2Metrics.textContent='1.8s · $0.21'; n2Node.className='flex-1 grid grid-cols-[1fr_2fr_1.5fr] gap-4 py-2 border-b border-silver-border/50 font-mono text-xs node-transition'; n2Dot.className='w-2 h-2 rounded-full border border-silver-dark bg-graphite-900 z-10 shrink-0 ml-[36px] transition-all duration-300'; n2Line.classList.add('opacity-0'); n3Model.textContent='Claude Opus'; n3Ctx.textContent='18.1k ctx'; n3Metrics.textContent='2.4s · $0.27'; totalCost.textContent='$0.521 / run'; totalCost.classList.remove('text-green-400'); policyStatus.textContent='Profiling baseline...'; objFunc.classList.remove('border-green-500/50','bg-green-900/10'); await wait(1500);
-      reset(); pipes.profile.className='transition-colors duration-300 text-silver-light font-medium animate-pulse'; profilerLine.classList.remove('opacity-0'); profilerLine.classList.add('animate-pulse-fast'); policyStatus.textContent='Identifying bottlenecks'; n2Node.classList.add('bg-graphite-800/50'); n3Node.classList.add('bg-graphite-800/50'); await wait(1500);
-      reset(); pipes.search.className='transition-colors duration-300 text-silver-light font-medium'; policyStatus.textContent='Searching execution policies'; profilerLine.classList.add('opacity-0'); n2Node.className='flex-1 grid grid-cols-[1fr_2fr_1.5fr] gap-4 py-2 border border-silver-border/80 bg-graphite-800/80 rounded pl-2 pr-0 font-mono text-xs relative overflow-hidden node-transition'; n2Dot.className='w-2 h-2 rounded-full border border-silver-light bg-silver-light z-10 shrink-0 ml-[36px] shadow-[0_0_8px_rgba(255,255,255,0.3)] transition-all duration-300 animate-pulse-fast'; n2Line.classList.remove('opacity-0'); n2Model.textContent='GPT mini'; n2OldModel.classList.remove('hidden');
-      let ctx=14.2,cost=.21,lat=1.8,tcost=.521; for(let i=0;i<10;i++){ctx-=(14.2-3.2)/10;cost-=(.21-.001)/10;lat-=(1.8-.2)/10;tcost-=(.521-.312)/10;n2Ctx.textContent=`${ctx.toFixed(1)}k ctx`;n2Metrics.textContent=`${lat.toFixed(1)}s · $${cost.toFixed(3)}`;totalCost.textContent=`$${tcost.toFixed(3)} / run`;await wait(60)} await wait(800);
-      reset(); pipes.verify.className='transition-colors duration-300 text-silver-light font-medium'; policyStatus.textContent='Verifying quality gate'; n2Node.classList.add('border-silver-light/50'); await wait(1200);
-      reset(); pipes.optimize.className='transition-colors duration-300 text-silver-light font-medium'; policyStatus.textContent='Policy applied'; totalCost.classList.add('text-green-400'); objFunc.classList.add('border-green-500/50','bg-green-900/10'); n2Dot.classList.remove('animate-pulse-fast'); await wait(2500); cycle();
-    } setTimeout(cycle,500);
-  });
-</script>
-</body>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#000000" />
+    <title>TwineRun — Operational AI Infrastructure</title>
+    <meta name="description" content="Train and deploy adaptive AI agents on your operational workflows in minutes." />
+    <meta property="og:title" content="TwineRun — Operational AI Infrastructure" />
+    <meta property="og:description" content="Train and deploy adaptive AI agents on your operational workflows in minutes." />
+    <meta property="og:type" content="website" />
+    <link rel="icon" type="image/png" href="/twinerun-favicon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>
+
