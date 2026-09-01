@@ -54,14 +54,24 @@ export default function App({ session, onLogout, onOpenProfile }: AppProps) {
   const streamRef = useRef<OptimizerStream | null>(null);
 
   const loadProjects = useCallback(async () => {
-    const applyProjects = (list: AgentProject[]) => {
+    const applyProjects = async (list: AgentProject[]) => {
+      // The collection endpoint intentionally returns lightweight summaries.
+      // Hydrate the selected project before rendering Studio so graph nodes and
+      // version state are available to the access/readiness gates.
+      const first = list[0];
+      const detail = first ? await api.project(first.id).catch(() => first) : null;
       setProjects(list);
-      setProject((current) => current && list.some((item) => item.id === current.id) ? current : list[0] || null);
+      setProject((current) => {
+        if (current && list.some((item) => item.id === current.id)) {
+          return current.id === detail?.id ? detail : current;
+        }
+        return detail;
+      });
       setProjectsLoaded(true);
       setError('');
     };
     try {
-      applyProjects(await api.projects());
+      await applyProjects(await api.projects());
     } catch (cause) {
       // A local demo session can outlive its sessionStorage token (for example
       // after a browser restart). Re-bootstrap the short-lived test token once
@@ -71,7 +81,7 @@ export default function App({ session, onLogout, onOpenProfile }: AppProps) {
           const auth = await api.demoSignIn();
           if (auth.accessToken) {
             window.sessionStorage.setItem('twinerun.access-token', auth.accessToken);
-            applyProjects(await api.projects());
+            await applyProjects(await api.projects());
             return;
           }
         } catch {
