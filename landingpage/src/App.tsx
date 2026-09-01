@@ -49,12 +49,31 @@ export default function App({ session, onLogout, onOpenProfile }: AppProps) {
   const streamRef = useRef<OptimizerStream | null>(null);
 
   const loadProjects = useCallback(async () => {
-    try {
-      const list = await api.projects();
+    const applyProjects = (list: AgentProject[]) => {
       setProjects(list);
       setProject((current) => current && list.some((item) => item.id === current.id) ? current : list[0] || null);
       setError(list.length ? '' : 'No persisted projects are available for this workspace yet.');
-    } catch (cause) { setError(cause instanceof ApiError ? cause.message : 'Unable to load projects from the backend.'); }
+    };
+    try {
+      applyProjects(await api.projects());
+    } catch (cause) {
+      // A local demo session can outlive its sessionStorage token (for example
+      // after a browser restart). Re-bootstrap the short-lived test token once
+      // so the studio does not surface a misleading "missing API key" error.
+      if (cause instanceof ApiError && cause.status === 401) {
+        try {
+          const auth = await api.demoSignIn();
+          if (auth.accessToken) {
+            window.sessionStorage.setItem('twinerun.access-token', auth.accessToken);
+            applyProjects(await api.projects());
+            return;
+          }
+        } catch {
+          // Fall through to the stable backend error below.
+        }
+      }
+      setError(cause instanceof ApiError ? cause.message : 'Unable to load projects from the backend.');
+    }
   }, []);
 
   useEffect(() => { void loadProjects(); return () => streamRef.current?.close(); }, [loadProjects]);
