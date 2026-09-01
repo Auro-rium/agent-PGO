@@ -11,6 +11,7 @@ COPY cli ./cli
 COPY migrations ./migrations
 COPY services ./services
 COPY packages ./packages
+COPY scripts ./scripts
 RUN pip install --no-cache-dir -e .
 
 EXPOSE 8000
