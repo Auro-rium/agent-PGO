@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useResizableWidth } from '../hooks/useResizableWidth';
 import { PanelResizeHandle } from './PanelResizeHandle';
 import { EvalCase, AgentProject } from '../types';
@@ -17,8 +17,15 @@ export const EvalsView: React.FC<EvalsViewProps> = ({ project, cases = [] }) => 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [selectedCase, setSelectedCase] = useState<EvalCase | null>(cases[0] || null);
+  useEffect(() => {
+    setSelectedCase((current) => (current && cases.some((item) => item.id === current.id) ? current : cases[0] || null));
+  }, [cases]);
 
   const categories = ['ALL', ...Array.from(new Set(cases.map((c) => c.category)))];
+  const evaluatedCount = cases.length || project.evalCasesCount;
+  const passedCount = cases.filter((item) => item.passed).length;
+  const passRate = evaluatedCount ? (passedCount / evaluatedCount) * 100 : 0;
+  const allPassed = evaluatedCount > 0 && passedCount === evaluatedCount;
 
   const filteredCases = cases.filter((c) => {
     const matchesSearch =
@@ -39,17 +46,17 @@ export const EvalsView: React.FC<EvalsViewProps> = ({ project, cases = [] }) => 
             <div className="flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-[#D7DADD]" />
               <span className="text-sm font-semibold text-[#F2F3F4] tracking-wide uppercase">
-                EVALUATION HARNESS (120 TEST VECTORS)
+                EVALUATION HARNESS ({evaluatedCount} TEST VECTORS)
               </span>
             </div>
             <p className="text-[11px] text-[#5C6268] mt-0.5">
-              Empirical ground-truth verification · 95% confidence interval · ±1.0% tolerance
+              Empirical ground-truth verification · {project.confidencePct.toFixed(0)}% confidence interval · ±{project.qualityTolerancePct.toFixed(1)}% tolerance
             </p>
           </div>
 
           <div className="flex items-center gap-2">
             <span className="px-2 py-0.5 rounded bg-[#0F1113] border border-white/[0.1] text-xs font-semibold text-[#F2F3F4]">
-              100% PASS RATE
+              {passRate.toFixed(1)}% PASS RATE
             </span>
           </div>
         </div>
@@ -104,7 +111,7 @@ export const EvalsView: React.FC<EvalsViewProps> = ({ project, cases = [] }) => 
                   </div>
 
                   <span className="px-1.5 py-0.2 rounded bg-white/[0.05] border border-white/[0.08] text-[9.5px] text-[#F2F3F4] font-medium">
-                    PASS
+                    {evalCase.status}
                   </span>
                 </div>
 
@@ -192,7 +199,7 @@ export const EvalsView: React.FC<EvalsViewProps> = ({ project, cases = [] }) => 
 
           <div className="p-3 rounded bg-[#050505] border border-white/[0.04] text-[11px] text-[#5C6268] flex items-center justify-between">
             <span>Certification Verdict:</span>
-            <span className="text-[#F2F3F4] font-semibold">STRICT PASS</span>
+            <span className={`font-semibold ${allPassed ? 'text-[#F2F3F4]' : 'text-[#A0A5AA]'}`}>{evaluatedCount ? (allPassed ? 'PASS' : 'REVIEW') : 'NO DATA'}</span>
           </div>
           <PanelResizeHandle side="left" onPointerDown={startResize} label="Resize eval inspector" />
         </div>
