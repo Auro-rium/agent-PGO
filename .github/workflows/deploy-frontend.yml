@@ -44,6 +44,13 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Inspect OIDC claims
+        shell: bash
+        run: |
+          set -euo pipefail
+          token="$(curl --fail --silent --show-error -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | python3 -c 'import json,sys,base64; t=json.load(sys.stdin)["value"]; p=t.split(".")[1]; p += "=" * (-len(p) % 4); print(base64.urlsafe_b64decode(p).decode())')"
+          python3 -c 'import json,sys; c=json.loads(sys.argv[1]); print("OIDC sub:", c.get("sub")); print("OIDC aud:", c.get("aud"))' "$token"
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
