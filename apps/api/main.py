@@ -13,12 +13,12 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, sta
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import desc, or_, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from . import models as api_models
-from .auth import Tenant, _configured_demo_tenant, _demo_enabled, authenticate, issue_demo_token
+from .auth import Tenant, _configured_demo_tenant, _demo_enabled, authenticate, issue_api_key, issue_demo_token, revoke_api_key
 from .db import create_session_factory, session_dependency
 from .models import Job, Organization, Project, ProjectLayout, ProjectSettings, ProjectVersion, Trace
 from .project_serializers import (
@@ -92,6 +92,10 @@ def _error_response(request: Request, status_code: int, message: str, *, fields:
 class ProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     slug: str = Field(min_length=1, max_length=128, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+
+
+class ProjectApiKeyCreate(BaseModel):
+    name: str = Field(default="agentpgo", min_length=1, max_length=255)
 
 
 class ProjectResponse(BaseModel):
@@ -450,6 +454,71 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
         except Exception:
             session.rollback(); raise HTTPException(status_code=409, detail="Project slug already exists")
         session.refresh(project); return project
+
+    @app.get("/v1/projects/{project_id}/onboarding", tags=["projects"])
+    def project_onboarding(project_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        """Return durable setup progress derived from persisted project evidence."""
+        project = _project_reference(project_id, tenant=tenant, session=session)
+        version = _latest_version(project, session)
+        trace_count = int(session.scalar(select(func.count()).select_from(Trace).where(Trace.project_id == project.id)) or 0)
+        dataset_cls = _model("EvalDataset")
+        eval_count = int(session.scalar(select(func.count()).select_from(dataset_cls).where(dataset_cls.project_id == project.id)) or 0)
+        baseline_count = int(session.scalar(select(func.count()).select_from(Job).where(Job.project_id == project.id, Job.kind == "baseline", Job.status == "completed")) or 0)
+        completed = {
+            "project": True,
+            "agentVersion": version is not None,
+            "traces": trace_count > 0,
+            "evaluations": eval_count > 0,
+            "baseline": baseline_count > 0,
+        }
+        if version is None:
+            stage, next_action = "PROJECT_CREATED", "DEFINE_VERSION"
+        elif trace_count == 0:
+            stage, next_action = "VERSION_DEFINED", "CONNECT_AGENT"
+        elif eval_count == 0:
+            stage, next_action = "TRACES_OBSERVED", "IMPORT_EVALS"
+        elif baseline_count == 0:
+            stage, next_action = "EVALS_READY", "RUN_BASELINE"
+        else:
+            stage, next_action = "READY_TO_OPTIMIZE", "RUN_OPTIMIZATION"
+        return {
+            "projectId": project.id,
+            "stage": stage,
+            "completed": completed,
+            "nextAction": next_action,
+            "counts": {"versions": int(bool(version)), "traces": trace_count, "evalSuites": eval_count, "baselineRuns": baseline_count},
+        }
+
+    @app.post("/v1/projects/{project_id}/api-keys", status_code=201, tags=["auth"])
+    def create_project_api_key(project_id: str, body: ProjectApiKeyCreate, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        if tenant.project_id:
+            raise HTTPException(status_code=403, detail="Project-scoped credentials cannot create API keys")
+        project = _project_reference(project_id, tenant=tenant, session=session)
+        secret, key = issue_api_key(organization_id=tenant.organization_id, project_id=project.id, name=body.name.strip())
+        session.add(key)
+        session.commit()
+        session.refresh(key)
+        return {"id": key.id, "name": key.name, "secret": secret, "keyPrefix": key.key_prefix, "projectId": project.id, "createdAt": key.created_at.isoformat()}
+
+    @app.get("/v1/projects/{project_id}/api-keys", tags=["auth"])
+    def list_project_api_keys(project_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> list[dict[str, Any]]:
+        if tenant.project_id:
+            raise HTTPException(status_code=403, detail="Project-scoped credentials cannot list API keys")
+        project = _project_reference(project_id, tenant=tenant, session=session)
+        keys = session.scalars(select(api_models.ApiKey).where(api_models.ApiKey.organization_id == tenant.organization_id, api_models.ApiKey.project_id == project.id).order_by(api_models.ApiKey.created_at)).all()
+        return [{"id": key.id, "name": key.name, "keyPrefix": key.key_prefix, "projectId": project.id, "revoked": key.revoked_at is not None, "createdAt": key.created_at.isoformat(), "revokedAt": key.revoked_at.isoformat() if key.revoked_at else None} for key in keys]
+
+    @app.post("/v1/projects/{project_id}/api-keys/{key_id}/revoke", tags=["auth"])
+    def revoke_project_api_key(project_id: str, key_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        if tenant.project_id:
+            raise HTTPException(status_code=403, detail="Project-scoped credentials cannot revoke API keys")
+        project = _project_reference(project_id, tenant=tenant, session=session)
+        key = session.scalar(select(api_models.ApiKey).where(api_models.ApiKey.id == key_id, api_models.ApiKey.organization_id == tenant.organization_id, api_models.ApiKey.project_id == project.id))
+        if key is None:
+            raise HTTPException(status_code=404, detail="API key not found")
+        revoke_api_key(key)
+        session.commit()
+        return {"id": key.id, "revoked": True, "revokedAt": key.revoked_at.isoformat() if key.revoked_at else None}
 
     def _project_version(project_id: str, version_id: str | None, tenant: Tenant, session: Session) -> ProjectVersion:
         project = _project_reference(project_id, tenant=tenant, session=session)
