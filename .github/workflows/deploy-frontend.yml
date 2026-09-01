@@ -41,7 +41,21 @@ jobs:
       - name: Typecheck
         run: npm run lint
 
+      - name: Validate frontend API configuration
+        env:
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL || secrets.VITE_API_BASE_URL }}
+        run: |
+          set -euo pipefail
+          test -n "$VITE_API_BASE_URL" || {
+            echo "Set the GitHub Actions variable or secret VITE_API_BASE_URL before deploying." >&2
+            exit 1
+          }
+
       - name: Build
+        env:
+          # This is the only value exposed to the browser bundle. Never pass
+          # provider, database, or other backend credentials to Vite.
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL || secrets.VITE_API_BASE_URL }}
         run: npm run build
 
       - name: Configure AWS credentials

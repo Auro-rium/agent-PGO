@@ -18,6 +18,20 @@ npm run lint
 npm run build
 ```
 
+The frontend reads its API origin from the browser-visible `VITE_API_BASE_URL`
+build variable and falls back to `/api/v1` when it is not set. For the
+`frontendv1` GitHub Actions deployment, configure exactly one of these in the
+repository's **Settings → Secrets and variables → Actions**:
+
+- **Variable** `VITE_API_BASE_URL` (preferred), or
+- **Secret** `VITE_API_BASE_URL` (used only when the variable is absent).
+
+The workflow passes only this value to `vite build`; it does not pass provider,
+database, authentication, or other backend credentials to the frontend. The
+value is embedded in the static browser bundle, so it must be an API origin or
+path rather than a credential (for example, `https://api.example.com/api/v1`
+or `/api/v1`).
+
 ## AWS Lambda delivery
 
 The static Vite artifact can be packaged into a Lambda Function URL with:
