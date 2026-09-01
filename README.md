@@ -29,6 +29,28 @@ uvicorn apps.api.main:app --reload
 
 The API accepts OTLP JSON at `/v1/traces` and `/v1/otlp/v1/traces`. All protected endpoints require a tenant-scoped API key.
 
+## Connector layer
+
+Any agent can connect by emitting OTLP/HTTP JSON to either ingestion endpoint. Use the TypeScript package (`@agentpgo/sdk`) or install the standalone Python package from `packages/sdk-py` (`agentpgo-sdk`) for in-process tracing:
+
+```python
+from agentpgo import AgentPGOClient
+
+client = AgentPGOClient(
+    api_key="project-key",
+    project_id="project-id",  # required for organization-scoped keys
+    endpoint="https://api.agentpgo.dev/v1/traces",
+    service_name="my-agent",
+)
+
+with client.trace(node="researcher", model="openai/gpt-5.6-sol", provider="openai"):
+    run_agent()
+
+client.flush_sync()
+```
+
+Instrumentation is metadata-only by default (model, node, provider, tokens, latency, status, and tool-call count). Prompt/output content is not collected by these connectors. Export is fail-open, so a telemetry outage does not interrupt the agent.
+
 ## Scope boundaries
 
 V1 produces recommendations and YAML exports only. It does not change production routing, collect prompt/output content by default, implement a frontend, or integrate payments.

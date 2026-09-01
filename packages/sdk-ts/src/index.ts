@@ -18,6 +18,7 @@ export interface AgentPGOConfig {
   serviceName?: string;
   serviceVersion?: string;
   environment?: string;
+  projectId?: string;
   enabled?: boolean;
   flushIntervalMs?: number;
   maxQueueSize?: number;
@@ -174,6 +175,7 @@ export class AgentPGOClient {
     try {
       const headers = { "content-type": "application/json", ...this.config.headers };
       if (this.config.apiKey) headers.authorization = `Bearer ${this.config.apiKey}`;
+      if (this.config.projectId) headers["X-AgentPGO-Project-ID"] = this.config.projectId;
       const response = await fetcher(this.config.endpoint, { method: "POST", headers, body: JSON.stringify(toOtlpTracePayload(batch, this.config)) });
       if (!response.ok) throw new Error(`OTLP export failed with HTTP ${response.status}`);
       return { sent: batch.length, dropped: 0 };
