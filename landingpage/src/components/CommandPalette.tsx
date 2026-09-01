@@ -18,6 +18,7 @@ interface CommandPaletteProps {
   onViewChange: (view: ViewMode) => void;
   onRunOptimization: () => void;
   onSelectProject: (id: string) => void;
+  onCreateProject?: () => void;
   onOpenExport: () => void;
   onOpenIntegrations: () => void;
   allProjects: AgentProject[];
@@ -29,6 +30,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onViewChange,
   onRunOptimization,
   onSelectProject,
+  onCreateProject,
   onOpenExport,
   onOpenIntegrations,
   allProjects
@@ -53,6 +55,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   if (!isOpen) return null;
 
   const actions = [
+    ...(onCreateProject ? [{ id: 'new-project', title: 'Create a new agent project', category: 'Workspaces', icon: Layers, shortcut: '', run: () => { onCreateProject(); onClose(); } }] : []),
     {
       id: 'opt',
       title: 'Run Profile-Guided Optimizer (Full Compilation Suite)',

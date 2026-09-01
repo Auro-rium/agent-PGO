@@ -17,6 +17,7 @@ import { SettingsView } from './components/SettingsView';
 import { DemoSession } from './auth/demoAuth';
 import { api, ApiError } from './lib/api';
 import { subscribeToOptimization, OptimizerStream } from './lib/sse';
+import { ProjectOnboarding } from './components/ProjectOnboarding';
 
 const studioViewFromHash = (): ViewMode => {
   const value = window.location.hash.replace(/^#studio\/?/, '').replace(/\/$/, '');
@@ -46,13 +47,18 @@ export default function App({ session, onLogout, onOpenProfile }: AppProps) {
   const [isIntegrationsModalOpen, setIsIntegrationsModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [error, setError] = useState('');
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
+  const [onboarding, setOnboarding] = useState<import('./types').ProjectSetupState | undefined>();
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [showCreateProject, setShowCreateProject] = useState(false);
   const streamRef = useRef<OptimizerStream | null>(null);
 
   const loadProjects = useCallback(async () => {
     const applyProjects = (list: AgentProject[]) => {
       setProjects(list);
       setProject((current) => current && list.some((item) => item.id === current.id) ? current : list[0] || null);
-      setError(list.length ? '' : 'No persisted projects are available for this workspace yet.');
+      setProjectsLoaded(true);
+      setError('');
     };
     try {
       applyProjects(await api.projects());
@@ -79,6 +85,7 @@ export default function App({ session, onLogout, onOpenProfile }: AppProps) {
   useEffect(() => { void loadProjects(); return () => streamRef.current?.close(); }, [loadProjects]);
   useEffect(() => {
     if (!project) return;
+    void api.onboarding(project.id).then(setOnboarding).catch(() => setOnboarding(project.setup));
     setSelectedNodeId(null);
     setCandidates([]); setEvalCases([]); setOptEvents([]); setSelectedCandidateId('');
     if (project.runId) { void api.candidates(project.runId).then(setCandidates).catch(() => undefined); void api.evalCases(project.runId).then(setEvalCases).catch(() => undefined); }
@@ -90,10 +97,25 @@ export default function App({ session, onLogout, onOpenProfile }: AppProps) {
   const handleSelectProject = async (projectId: string) => {
     try { setProject(await api.project(projectId)); } catch (cause) { setError(cause instanceof ApiError ? cause.message : 'Unable to load that project.'); }
   };
+  const createProject = async (name: string, slug: string) => {
+    setCreatingProject(true); setError('');
+    try {
+      const created = await api.createProject(name, slug);
+      const next = await api.project(created.id).catch(() => created);
+      setProjects((current) => [...current.filter((item) => item.id !== next.id), next]);
+      setProject(next);
+      setShowCreateProject(false);
+      setOnboarding(await api.onboarding(next.id).catch(() => next.setup));
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Unable to create project.');
+      throw cause;
+    } finally { setCreatingProject(false); }
+  };
+  const createProjectKey = async () => project ? api.createProjectKey(project.id, 'twinerun-local') : null;
   const handleSelectModelOverride = (nodeId: string, modelName: string) => setProject((prev) => prev ? ({ ...prev, nodes: prev.nodes.map((node) => node.id === nodeId ? { ...node, currentModel: modelName } : node) }) : prev);
 
   const startOptimization = async () => {
-    if (!project || isOptimizing) return;
+    if (!project || isOptimizing || !onboarding?.hasVersion || onboarding.baselineStatus !== 'COMPLETED') return;
     setError(''); setIsOptimizing(true); setIsOptModalOpen(true); setOptimizationStatus('QUEUED'); setOptEvents([]);
     try {
       const result = await api.startOptimization(project.id, { projectVersionId: project.version, qualityTolerancePp: project.qualityTolerancePct, confidencePct: project.confidencePct, objective: 'cost_quality', idempotencyKey: crypto.randomUUID() });
@@ -127,10 +149,16 @@ export default function App({ session, onLogout, onOpenProfile }: AppProps) {
     window.addEventListener('keydown', handleKey); return () => window.removeEventListener('keydown', handleKey);
   });
 
-  if (!project) return <div className="studio-shell flex h-screen items-center justify-center bg-[#050505] text-[#D6D9DC] font-mono text-xs"><div className="space-y-3 text-center"><div>{error || 'Loading persisted workspace…'}</div><button className="silver-btn-gradient rounded px-3 py-1 text-[#050505]" onClick={() => void loadProjects()}>Retry</button></div></div>;
+  if (!project) {
+    if (projectsLoaded) return <div className="studio-shell flex h-screen w-screen bg-[#050505] text-[#D6D9DC] overflow-hidden font-sans"><ProjectOnboarding busy={creatingProject} error={error} onCreateProject={createProject} onRefresh={() => void loadProjects()} /></div>;
+    return <div className="studio-shell flex h-screen items-center justify-center bg-[#050505] text-[#D6D9DC] font-mono text-xs"><div className="space-y-3 text-center"><div>{error || "Loading persisted workspace…"}</div><button className="silver-btn-gradient rounded px-3 py-1 text-[#050505]" onClick={() => void loadProjects()}>Retry</button></div></div>;
+  }
+  if (showCreateProject) return <div className="studio-shell flex h-screen w-screen bg-[#050505] text-[#D6D9DC] overflow-hidden font-sans"><ProjectOnboarding busy={creatingProject} error={error} onCreateProject={createProject} onRefresh={() => { setShowCreateProject(false); void loadProjects(); }} /></div>;
+  const projectReady = Boolean(onboarding?.hasVersion && onboarding?.baselineStatus === "COMPLETED");
+  if (!projectReady) return <div className="studio-shell flex h-screen w-screen bg-[#050505] text-[#D6D9DC] overflow-hidden font-sans"><ProjectOnboarding project={project} setup={onboarding || project.setup} error={error} onRefresh={() => { void loadProjects(); void api.onboarding(project.id).then(setOnboarding).catch(() => undefined); }} onCreateKey={createProjectKey} onCreateVersion={() => setError("Version creation UI will be enabled when the agent graph editor is connected.")} /></div>;
   return <div className="studio-shell flex h-screen w-screen bg-[#050505] text-[#D6D9DC] overflow-hidden font-sans select-none relative">
     <NavigationRail session={activeSession} onLogout={onLogout || (() => {})} onOpenProfile={onOpenProfile || (() => {})} currentView={currentView} onViewChange={handleViewChange} onOpenIntegrations={() => setIsIntegrationsModalOpen(true)} onOpenSettings={() => { setIsSettingsModalOpen(false); handleViewChange('settings'); }} onOpenCommandPalette={() => setIsCommandPaletteOpen(true)} isOptimizing={isOptimizing} />
-    <div className="flex-1 flex flex-col h-full overflow-hidden"><TopBar project={project} allProjects={projects} onSelectProject={handleSelectProject} currentView={currentView} onViewChange={handleViewChange} onRunOptimization={() => void startOptimization()} isOptimizing={isOptimizing} onOpenCommandPalette={() => setIsCommandPaletteOpen(true)} onOpenExport={() => setIsExportModalOpen(true)} optimizationProgressPct={progress} />
+    <div className="flex-1 flex flex-col h-full overflow-hidden"><TopBar project={project} allProjects={projects} onSelectProject={handleSelectProject} onCreateProject={() => setShowCreateProject(true)} currentView={currentView} onViewChange={handleViewChange} onRunOptimization={() => void startOptimization()} isOptimizing={isOptimizing} onOpenCommandPalette={() => setIsCommandPaletteOpen(true)} onOpenExport={() => setIsExportModalOpen(true)} optimizationProgressPct={progress} canOptimize={projectReady} />
       {error && <div className="px-4 py-1.5 bg-[#241b1b] border-b border-white/[0.08] text-[10px] font-mono" role="alert">{error}</div>}
       <main className="flex-1 flex overflow-hidden relative">
         {currentView === 'graph' && <><ExecutionGraph project={project} selectedNodeId={selectedNodeId} onSelectNode={setSelectedNodeId} isOptimizing={isOptimizing} onRunOptimization={() => void startOptimization()} activeTestingNodeId={activeTestingNodeId} testingStatus={testingStatus} /><NodeInspector selectedNode={selectedNode} project={project} onClose={() => setSelectedNodeId(null)} onSelectModelOverride={handleSelectModelOverride} onRunOptimization={() => void startOptimization()} isOptimizing={isOptimizing} /></>}
@@ -142,7 +170,7 @@ export default function App({ session, onLogout, onOpenProfile }: AppProps) {
       </main>
     </div>
     <OptimizationModal isOpen={isOptModalOpen} isOptimizing={isOptimizing} events={optEvents} currentStepIndex={optEvents.length} totalSteps={Math.max(1, optEvents.length)} project={project} onClose={() => setIsOptModalOpen(false)} onApplyAndCompare={() => { setIsOptModalOpen(false); handleViewChange('diff'); }} onOpenFrontier={() => { setIsOptModalOpen(false); handleViewChange('frontier'); }} />
-    <CommandPalette isOpen={isCommandPaletteOpen} onClose={() => setIsCommandPaletteOpen(false)} onViewChange={handleViewChange} onRunOptimization={() => void startOptimization()} onSelectProject={handleSelectProject} onOpenExport={() => setIsExportModalOpen(true)} onOpenIntegrations={() => setIsIntegrationsModalOpen(true)} allProjects={projects} />
+    <CommandPalette isOpen={isCommandPaletteOpen} onClose={() => setIsCommandPaletteOpen(false)} onViewChange={handleViewChange} onRunOptimization={() => void startOptimization()} onSelectProject={handleSelectProject} onCreateProject={() => setShowCreateProject(true)} onOpenExport={() => setIsExportModalOpen(true)} onOpenIntegrations={() => setIsIntegrationsModalOpen(true)} allProjects={projects} />
     <ExportModal isOpen={isExportModalOpen} onClose={() => setIsExportModalOpen(false)} project={project} onExport={() => project.runId ? api.exportRun(project.runId) : Promise.resolve()} />
     <IntegrationsModal isOpen={isIntegrationsModalOpen} onClose={() => setIsIntegrationsModalOpen(false)} />
     <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} project={project} onUpdateProjectSettings={updateSettings} />

@@ -1,4 +1,4 @@
-import { AgentNode, AgentProject, CandidateSubstitution, EvalCase, OptimizationCandidate, OptimizerEvent } from "../types";
+import { AgentNode, AgentProject, CandidateSubstitution, EvalCase, OptimizationCandidate, OptimizerEvent, ProjectSetupState } from "../types";
 
 const value = (item: unknown, key: string, fallback: unknown = undefined): unknown => item && typeof item === "object" && key in item ? (item as Record<string, unknown>)[key] : fallback;
 const number = (item: unknown, keys: string[], fallback = 0) => {
@@ -44,13 +44,40 @@ const adaptSubstitution = (item: unknown): CandidateSubstitution => ({
   model: text(item, ["model", "modelId", "model_id"]), costDelta: number(item, ["costDelta", "cost_delta"]), costDeltaPct: number(item, ["costDeltaPct", "cost_delta_pct"]), qualityDelta: number(item, ["qualityDelta", "quality_delta"]), latencyDeltaSec: number(item, ["latencyDeltaSec", "latency_delta_sec"]), status: text(item, ["status"], "VIABLE").toUpperCase() as CandidateSubstitution["status"], reason: text(item, ["reason"], "Measured against the stored baseline."),
 });
 
+const adaptSetup = (item: unknown, version: string, nodes: AgentNode[]): ProjectSetupState | undefined => {
+  const raw = value(item, "setup", value(item, "setupState", undefined));
+  const source = (raw && typeof raw === "object" ? raw : item) as Record<string, unknown>;
+  const completed = (value(source, "completed", {}) || {}) as Record<string, unknown>;
+  const counts = (value(source, "counts", {}) || {}) as Record<string, unknown>;
+  const hasExplicit = ["hasVersion", "has_version", "hasTraces", "has_traces", "hasEvaluationSuite", "has_evaluation_suite", "nextAction", "next_action", "baselineStatus", "baseline_status", "completed", "counts", "stage"].some((key) => key in source);
+  if (!hasExplicit && !raw) return undefined;
+  const bool = (keys: string[], fallback: boolean) => { for (const key of keys) if (key in source) return Boolean(source[key]); for (const key of keys) if (key in completed) return Boolean(completed[key]); return fallback; };
+  const status = text(source, ["baselineStatus", "baseline_status"], Boolean(completed.baseline) ? "COMPLETED" : "NOT_STARTED").toUpperCase();
+  return {
+    projectCreated: bool(["projectCreated", "project_created"], true),
+    hasVersion: bool(["hasVersion", "has_version", "agentVersion", "agent_version"], Boolean(version && version !== "latest")),
+    hasTraces: bool(["hasTraces", "has_traces", "traces"], false),
+    hasEvaluationSuite: bool(["hasEvaluationSuite", "has_evaluation_suite", "hasEvals", "has_evals", "evaluations", "evalSuites", "eval_suites"], false),
+    baselineStatus: status,
+    nextAction: text(source, ["nextAction", "next_action"], nodes.length ? "ADD_EVALUATIONS" : "DEFINE_AGENT").toUpperCase(),
+    profilingOnly: bool(["profilingOnly", "profiling_only"], false),
+    versionId: text(source, ["versionId", "version_id"], version),
+    traceCount: number(source, ["traceCount", "trace_count"], number(counts, ["traces"])),
+    evalCaseCount: number(source, ["evalCaseCount", "eval_case_count"], number(counts, ["evalCases", "eval_case_count", "evaluations"])),
+  };
+};
+
+export function adaptOnboarding(item: unknown): ProjectSetupState { return adaptSetup(item, "", []) || { projectCreated: true, hasVersion: false, hasTraces: false, hasEvaluationSuite: false, baselineStatus: "NOT_STARTED", nextAction: "DEFINE_AGENT" }; }
+
 export function adaptProject(item: unknown): AgentProject {
   const nodes = ((value(item, "nodes", []) || []) as unknown[]).map(adaptNode);
   const edges = ((value(item, "edges", []) || []) as unknown[]).map((edge) => ({ id: text(edge, ["id"]), from: text(edge, ["from"]), to: text(edge, ["to"]), label: text(edge, ["label"]), throughputTokensPerSec: number(edge, ["throughputTokensPerSec", "throughput_tokens_per_sec"]), avgLatencyMs: number(edge, ["avgLatencyMs", "avg_latency_ms"]) }));
   const runId = text(item, ["runId", "run_id"], "");
+  const version = text(item, ["version", "versionId", "version_id"], "");
+  const setup = adaptSetup(item, version, nodes);
   return {
-    id: text(item, ["id", "projectId", "project_id"]), name: text(item, ["name"], "Untitled agent"), environment: text(item, ["environment"], "STAGING"), version: text(item, ["version", "versionId", "version_id"], "latest"), runId,
-    totalExecutions: number(item, ["totalExecutions", "total_executions"]), baselineCost: number(item, ["baselineCost", "baseline_cost"]), optimizedCost: number(item, ["optimizedCost", "optimized_cost"]), savingsPct: number(item, ["savingsPct", "savings_pct"]), monthlySavingsEstimate: number(item, ["monthlySavingsEstimate", "monthly_savings_estimate"]), monthlyRequests: number(item, ["monthlyRequests", "monthly_requests"]), baselineLatencyP95: number(item, ["baselineLatencyP95", "baseline_latency_p95"]), optimizedLatencyP95: number(item, ["optimizedLatencyP95", "optimized_latency_p95"]), baselineQuality: number(item, ["baselineQuality", "baseline_quality"]), optimizedQuality: number(item, ["optimizedQuality", "optimized_quality"]), evalCasesCount: number(item, ["evalCasesCount", "eval_cases_count"]), qualityTolerancePct: number(item, ["qualityTolerancePct", "qualityTolerancePp", "quality_tolerance_pp", "quality_tolerance_pct"]), confidencePct: number(item, ["confidencePct", "confidence_pct"], 95), nodes, edges,
+    id: text(item, ["id", "projectId", "project_id"]), name: text(item, ["name"], "Untitled agent"), environment: text(item, ["environment"], "STAGING"), version, slug: text(item, ["slug"], ""), runId,
+    totalExecutions: number(item, ["totalExecutions", "total_executions"]), baselineCost: number(item, ["baselineCost", "baseline_cost"]), optimizedCost: number(item, ["optimizedCost", "optimized_cost"]), savingsPct: number(item, ["savingsPct", "savings_pct"]), monthlySavingsEstimate: number(item, ["monthlySavingsEstimate", "monthly_savings_estimate"]), monthlyRequests: number(item, ["monthlyRequests", "monthly_requests"]), baselineLatencyP95: number(item, ["baselineLatencyP95", "baseline_latency_p95"]), optimizedLatencyP95: number(item, ["optimizedLatencyP95", "optimized_latency_p95"]), baselineQuality: number(item, ["baselineQuality", "baseline_quality"]), optimizedQuality: number(item, ["optimizedQuality", "optimized_quality"]), evalCasesCount: number(item, ["evalCasesCount", "eval_cases_count"]), qualityTolerancePct: number(item, ["qualityTolerancePct", "qualityTolerancePp", "quality_tolerance_pp", "quality_tolerance_pct"]), confidencePct: number(item, ["confidencePct", "confidence_pct"], 95), nodes, edges, setup,
   };
 }
 

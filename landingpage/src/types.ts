@@ -1,5 +1,20 @@
 export type NodeQualitySensitivity = 'HIGH' | 'MEDIUM' | 'LOW';
 
+export type ProjectNextAction = 'DEFINE_AGENT' | 'CREATE_VERSION' | 'ADD_TRACES' | 'ADD_EVALUATIONS' | 'RUN_BASELINE' | 'OPTIMIZE' | 'PROFILING_ONLY';
+
+export interface ProjectSetupState {
+  projectCreated: boolean;
+  hasVersion: boolean;
+  hasTraces: boolean;
+  hasEvaluationSuite: boolean;
+  baselineStatus: 'NOT_STARTED' | 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'SKIPPED' | string;
+  nextAction: ProjectNextAction | string;
+  profilingOnly?: boolean;
+  versionId?: string;
+  traceCount?: number;
+  evalCaseCount?: number;
+}
+
 export interface CandidateSubstitution {
   model: string;
   costDelta: number; // e.g. -0.091
@@ -102,6 +117,7 @@ export interface EvalCase {
 export interface AgentProject {
   id: string;
   name: string;
+  slug?: string;
   environment: string; // 'PROD' | 'STAGING'
   version: string; // 'v31'
   runId: string; // 'RUN 1842'
@@ -120,6 +136,7 @@ export interface AgentProject {
   confidencePct: number; // 95
   nodes: AgentNode[];
   edges: GraphEdge[];
+  setup?: ProjectSetupState;
 }
 
 export type ViewMode = 'graph' | 'frontier' | 'timeline' | 'diff' | 'evals' | 'settings';

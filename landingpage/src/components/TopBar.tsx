@@ -13,6 +13,7 @@ interface TopBarProps {
   project: AgentProject;
   allProjects: AgentProject[];
   onSelectProject: (projectId: string) => void;
+  onCreateProject?: () => void;
   currentView: ViewMode;
   onViewChange: (view: ViewMode) => void;
   onRunOptimization: () => void;
@@ -20,19 +21,22 @@ interface TopBarProps {
   onOpenCommandPalette: () => void;
   onOpenExport: () => void;
   optimizationProgressPct: number;
+  canOptimize?: boolean;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
   project,
   allProjects,
   onSelectProject,
+  onCreateProject,
   currentView,
   onViewChange,
   onRunOptimization,
   isOptimizing,
   onOpenCommandPalette,
   onOpenExport,
-  optimizationProgressPct
+  optimizationProgressPct,
+  canOptimize = true
 }) => {
   const [isAgentMenuOpen, setIsAgentMenuOpen] = useState(false);
 
@@ -84,6 +88,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                     {p.id === project.id && <Check className="w-3.5 h-3.5 text-[#D7DADD]" />}
                   </button>
                 ))}
+                {onCreateProject && <button onClick={() => { onCreateProject(); setIsAgentMenuOpen(false); }} className="mt-1 flex w-full items-center gap-2 border-t border-white/[0.06] px-3 py-2 text-left text-xs text-[#D7DADD] hover:bg-white/[0.04]"><span className="text-base leading-none">+</span> New project</button>}
               </div>
             </>
           )}
@@ -119,7 +124,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         <button
           id="topbar-optimize-btn"
           onClick={onRunOptimization}
-          disabled={isOptimizing}
+          disabled={isOptimizing || !canOptimize}
           className={`relative overflow-hidden px-3.5 py-1 rounded text-xs font-mono font-bold tracking-wider transition-all flex items-center gap-1.5 select-none active:scale-[0.98] ${
             isOptimizing
               ? 'bg-[#0F1113] text-[#A0A5AA] border border-white/[0.12] cursor-wait'

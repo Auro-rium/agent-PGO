@@ -44,19 +44,30 @@ jobs:
       - name: Validate frontend API configuration
         env:
           VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL || secrets.VITE_API_BASE_URL }}
+          VITE_DEMO_AUTH_ENABLED: "true"
         run: |
           set -euo pipefail
           test -n "$VITE_API_BASE_URL" || {
             echo "Set the GitHub Actions variable or secret VITE_API_BASE_URL before deploying." >&2
             exit 1
           }
+          test "$VITE_API_BASE_URL" = "https://koq91flf04.execute-api.us-east-1.amazonaws.com/api/v1" || {
+            echo "VITE_API_BASE_URL must point at the deployed API Gateway /api/v1 origin." >&2
+            exit 1
+          }
 
       - name: Build
         env:
-          # This is the only value exposed to the browser bundle. Never pass
-          # provider, database, or other backend credentials to Vite.
           VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL || secrets.VITE_API_BASE_URL }}
+          VITE_DEMO_AUTH_ENABLED: "true"
         run: npm run build
+
+      - name: Verify API deployment sentinel
+        run: |
+          set -euo pipefail
+          test -f dist/index.html
+          grep -R -Fq "https://koq91flf04.execute-api.us-east-1.amazonaws.com/api/v1" dist/assets
+          ! grep -R -Fq '"/api/v1"' dist/assets
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
