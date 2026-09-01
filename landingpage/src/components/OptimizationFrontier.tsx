@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { useResizableWidth } from '../hooks/useResizableWidth';
+import { PanelResizeHandle } from './PanelResizeHandle';
 import { OptimizationCandidate, AgentProject } from '../types';
 import { 
   Check
@@ -19,6 +21,7 @@ export const OptimizationFrontier: React.FC<OptimizationFrontierProps> = ({
   onApplyCandidateToGraph,
   project
 }) => {
+  const { width, startResize } = useResizableWidth(352, 280, 520, true);
   const [hoveredCandidate, setHoveredCandidate] = useState<OptimizationCandidate | null>(null);
   const [filterMode, setFilterMode] = useState<'all' | 'pareto'>('pareto');
 
@@ -442,7 +445,7 @@ export const OptimizationFrontier: React.FC<OptimizationFrontierProps> = ({
       </div>
 
       {/* Right Column: Candidate Detailed Inspector */}
-      <div className="studio-inspector w-full md:w-80 lg:w-96 bg-[#090A0B] border-t md:border-t-0 md:border-l border-white/[0.06] p-4 flex flex-col justify-between overflow-y-auto shrink-0">
+      <div className="studio-inspector w-full md:w-80 lg:w-96 bg-[#090A0B] border-t md:border-t-0 md:border-l border-white/[0.06] p-4 flex flex-col justify-between overflow-y-auto shrink-0" style={{ width, flex: "0 0 auto" }}>
         <div className="space-y-4">
           {/* Header */}
           <div className="border-b border-white/[0.06] pb-3 flex items-center justify-between">
@@ -550,6 +553,7 @@ export const OptimizationFrontier: React.FC<OptimizationFrontierProps> = ({
             <span>Apply {activeInspection.name}</span>
           </button>
         </div>
+        <PanelResizeHandle side="left" onPointerDown={startResize} label="Resize frontier inspector" />
       </div>
     </div>
   );

@@ -1,4 +1,6 @@
 import React from 'react';
+import { useResizableWidth } from '../hooks/useResizableWidth';
+import { PanelResizeHandle } from './PanelResizeHandle';
 import { ViewMode } from '../types';
 import { 
   Network, 
@@ -28,6 +30,7 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
   onOpenCommandPalette,
   isOptimizing
 }) => {
+  const { width, startResize } = useResizableWidth(68, 56, 120);
   const navItems = [
     {
       id: 'graph' as ViewMode,
@@ -67,7 +70,7 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
   ];
 
   return (
-    <aside className="studio-rail w-13 shrink-0 bg-[#090A0B] border-r border-white/[0.06] flex flex-col items-center justify-between py-3 z-30 select-none">
+    <aside className="studio-rail w-13 shrink-0 bg-[#090A0B] border-r border-white/[0.06] flex flex-col items-center justify-between py-3 z-30 select-none" style={{ width, flex: "0 0 auto" }}>
       {/* Top Logo */}
       <div className="flex flex-col items-center gap-3">
         <button
@@ -162,6 +165,7 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
           </div>
         </button>
       </div>
+      <PanelResizeHandle side="right" onPointerDown={startResize} label="Resize navigation rail" />
     </aside>
   );
 };

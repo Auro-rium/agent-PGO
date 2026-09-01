@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { useResizableWidth } from '../hooks/useResizableWidth';
+import { PanelResizeHandle } from './PanelResizeHandle';
 import { AgentNode, AgentProject } from '../types';
 import { 
   X, 
@@ -23,12 +25,13 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
   onRunOptimization,
   isOptimizing
 }) => {
+  const { width, startResize } = useResizableWidth(352, 280, 520, true);
   const [activeTab, setActiveTab] = useState<'profile' | 'prompt'>('profile');
 
   // If no node is selected, show the Agent Global Profiler
   if (!selectedNode) {
     return (
-      <aside className="studio-inspector w-80 lg:w-96 bg-[#090A0B] border-l border-white/[0.06] flex flex-col h-full overflow-y-auto select-none shrink-0 z-20 font-mono text-xs">
+      <aside className="studio-inspector w-80 lg:w-96 bg-[#090A0B] border-l border-white/[0.06] flex flex-col h-full overflow-y-auto select-none shrink-0 z-20 font-mono text-xs" style={{ width, flex: "0 0 auto" }}>
         {/* Header */}
         <div className="p-3.5 border-b border-white/[0.06] flex items-center justify-between bg-[#0F1113]">
           <div>
@@ -136,13 +139,14 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
             <span>RUN PGO COMPILATION</span>
           </button>
         </div>
-      </aside>
+        <PanelResizeHandle side="left" onPointerDown={startResize} label="Resize inspector panel" />
+    </aside>
     );
   }
 
   // A specific node is selected: render deep node inspector
   return (
-    <aside className="studio-inspector w-80 lg:w-96 bg-[#090A0B] border-l border-white/[0.06] flex flex-col h-full overflow-y-auto select-none shrink-0 z-20 font-mono text-xs animate-in slide-in-from-right duration-150">
+    <aside className="studio-inspector w-80 lg:w-96 bg-[#090A0B] border-l border-white/[0.06] flex flex-col h-full overflow-y-auto select-none shrink-0 z-20 font-mono text-xs animate-in slide-in-from-right duration-150" style={{ width, flex: "0 0 auto" }}>
       {/* Header */}
       <div className="p-3.5 border-b border-white/[0.06] flex items-center justify-between bg-[#0F1113]">
         <div className="flex items-center gap-2">
@@ -393,6 +397,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
           </div>
         </div>
       )}
+      <PanelResizeHandle side="left" onPointerDown={startResize} label="Resize inspector panel" />
     </aside>
   );
 };

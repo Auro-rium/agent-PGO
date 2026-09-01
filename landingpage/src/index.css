@@ -211,25 +211,70 @@
 }
 
 
-/* Native drag affordances for adjustable studio panels. */
+/* Resizable studio panel bounds. */
 .studio-shell .studio-rail {
   min-width: 3.75rem;
   max-width: 8rem;
-  resize: horizontal;
-  overflow-x: auto;
-  overflow-y: hidden;
-  cursor: ew-resize;
+  position: relative;
+  overflow: visible;
 }
 
 .studio-shell .studio-inspector {
   min-width: 17.5rem;
   max-width: 32.5rem;
-  resize: horizontal;
-  overflow-x: auto;
-  cursor: ew-resize;
+  position: relative;
 }
 
 .studio-shell .studio-canvas,
 .studio-shell .studio-frontier > div:first-child {
   min-width: 18rem;
+}
+
+
+/* Explicit pointer splitters: reliable inside the flex shell. */
+.studio-panel-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  z-index: 80;
+  opacity: 0.42;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.studio-panel-resize--right { right: 0; }
+.studio-panel-resize--left { left: 0; }
+.studio-panel-resize:hover,
+.studio-panel-resize:focus-visible,
+.studio-is-resizing .studio-panel-resize { opacity: 1; }
+
+.studio-panel-resize span {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  background: rgba(215, 218, 221, 0.5);
+  box-shadow: 0 0 12px rgba(215, 218, 221, 0.25);
+}
+
+.studio-panel-resize:hover span,
+.studio-panel-resize:focus-visible span,
+.studio-is-resizing .studio-panel-resize span { background: #F2F3F4; }
+
+body.studio-is-resizing,
+body.studio-is-resizing * { user-select: none !important; cursor: ew-resize !important; }
+
+@media (max-width: 767px) {
+  .studio-shell .studio-inspector {
+    width: 100% !important;
+    min-width: 0;
+    max-width: none;
+  }
 }
