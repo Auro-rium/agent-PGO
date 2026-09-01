@@ -101,79 +101,9 @@ export const TopBar: React.FC<TopBarProps> = ({
         </div>
       </div>
 
-      {/* Center: View Switcher */}
-      <div className="studio-view-tabs hidden md:flex items-center bg-[#050505] p-0.5 rounded border border-white/[0.06]">
-        <button
-          id="viewtab-graph"
-          onClick={() => onViewChange('graph')}
-          className={`px-3 py-1 text-xs font-mono rounded transition-all ${
-            currentView === 'graph'
-              ? 'bg-[#0F1113] text-[#F2F3F4] border border-white/[0.08] shadow-sm'
-              : 'text-[#5C6268] hover:text-[#D7DADD]'
-          }`}
-        >
-          Execution Graph
-        </button>
-        <button
-          id="viewtab-frontier"
-          onClick={() => onViewChange('frontier')}
-          className={`px-3 py-1 text-xs font-mono rounded transition-all flex items-center gap-1.5 ${
-            currentView === 'frontier'
-              ? 'bg-[#0F1113] text-[#F2F3F4] border border-white/[0.08] shadow-sm'
-              : 'text-[#5C6268] hover:text-[#D7DADD]'
-          }`}
-        >
-          <span>Pareto Frontier</span>
-          <span className="w-1.5 h-1.5 rounded-full bg-[#A0A5AA]" />
-        </button>
-        <button
-          id="viewtab-diff"
-          onClick={() => onViewChange('diff')}
-          className={`px-3 py-1 text-xs font-mono rounded transition-all flex items-center gap-1.5 ${
-            currentView === 'diff'
-              ? 'bg-[#0F1113] text-[#F2F3F4] border border-white/[0.08] shadow-sm'
-              : 'text-[#5C6268] hover:text-[#D7DADD]'
-          }`}
-        >
-          <span>Before / After</span>
-          <span className="text-[10px] text-[#A0A5AA] font-bold">-{project.savingsPct}%</span>
-        </button>
-        <button
-          id="viewtab-timeline"
-          onClick={() => onViewChange('timeline')}
-          className={`px-3 py-1 text-xs font-mono rounded transition-all ${
-            currentView === 'timeline'
-              ? 'bg-[#0F1113] text-[#F2F3F4] border border-white/[0.08] shadow-sm'
-              : 'text-[#5C6268] hover:text-[#D7DADD]'
-          }`}
-        >
-          Optimizer Trace
-        </button>
-        <button
-          id="viewtab-evals"
-          onClick={() => onViewChange('evals')}
-          className={`px-3 py-1 text-xs font-mono rounded transition-all ${
-            currentView === 'evals'
-              ? 'bg-[#0F1113] text-[#F2F3F4] border border-white/[0.08] shadow-sm'
-              : 'text-[#5C6268] hover:text-[#D7DADD]'
-          }`}
-        >
-          Evals ({project.evalCasesCount})
-        </button>
-      </div>
 
       {/* Right: Command palette & Metallic OPTIMIZE Action */}
       <div className="flex items-center gap-2">
-        {/* Command Palette Button */}
-        <button
-          id="topbar-cmd-btn"
-          onClick={onOpenCommandPalette}
-          className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded bg-[#0F1113] border border-white/[0.06] hover:border-white/[0.12] text-[#5C6268] hover:text-[#D7DADD] text-xs font-mono transition-colors"
-          title="Command Palette"
-        >
-          <Command className="w-3 h-3" />
-          <span>⌘K</span>
-        </button>
 
         {/* Export Spec CTA */}
         <button

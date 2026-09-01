@@ -77,7 +77,7 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
           title="twinerun — Profile-Guided Optimizer"
         >
           <div className="w-8 h-8 rounded bg-[#0F1113] border border-white/[0.08] flex items-center justify-center text-[#F2F3F4] group-hover:border-white/[0.2] transition-all">
-            <span className="font-mono font-bold text-sm text-[#F2F3F4]">◈</span>
+            <img src="/twinerun-favicon.png" alt="TwineRun" className="w-5 h-5 object-contain" />
           </div>
           {isOptimizing && (
             <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-[#F2F3F4] animate-ping" />
