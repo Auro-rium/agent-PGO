@@ -15,7 +15,7 @@ import { IntegrationsModal } from './components/IntegrationsModal';
 import { SettingsModal } from './components/SettingsModal';
 import { SettingsView } from './components/SettingsView';
 import { DemoSession } from './auth/demoAuth';
-import { api, ApiError } from './lib/api';
+import { api, ApiError, DEMO_AUTH_ENABLED } from './lib/api';
 import { subscribeToOptimization, OptimizerStream } from './lib/sse';
 import { ProjectOnboarding } from './components/ProjectOnboarding';
 import { navigate, studioPath, studioViewFromPath } from './lib/router';
@@ -109,7 +109,7 @@ export default function App({ session, onLogout, onOpenProfile }: AppProps) {
       // A local demo session can outlive its sessionStorage token (for example
       // after a browser restart). Re-bootstrap the short-lived test token once
       // so the studio does not surface a misleading "missing API key" error.
-      if (cause instanceof ApiError && cause.status === 401) {
+      if (DEMO_AUTH_ENABLED && cause instanceof ApiError && cause.status === 401) {
         try {
           const auth = await api.demoSignIn();
           if (auth.accessToken) {
