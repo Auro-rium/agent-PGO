@@ -1,86 +1,114 @@
-<!DOCTYPE html>
-<html lang="en" class="scroll-smooth">
+<!doctype html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#050505">
-  <title>AgentPGO — Optimize AI Agent Cost & Performance</title>
-  <meta name="description" content="Profile-guided optimization for AI agents. Reduce inference cost and latency while preserving task quality.">
-  <meta property="og:type" content="website">
-  <meta property="og:title" content="AgentPGO — Optimize AI Agent Cost & Performance">
-  <meta property="og:description" content="Profile-guided optimization for AI agents. Reduce inference cost and latency while preserving task quality.">
-  <meta name="twitter:card" content="summary_large_image">
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://code.iconify.design/iconify-icon/1.0.7/iconify-icon.min.js"></script>
-  <link href="https://api.fontshare.com/v2/css?f[]=archivo@300,400,500,600&display=swap" rel="stylesheet">
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <script>
-    tailwind.config = { theme: { extend: {
-      colors: { graphite: {900:'#050505',800:'#080808',700:'#141414',600:'#262626',muted:'#888888'}, silver:{light:'#f5f5f5',dark:'#a1a1aa',border:'rgba(224,224,224,.15)'} },
-      fontFamily:{sans:['Archivo','sans-serif'],mono:['JetBrains Mono','monospace']},
-      backgroundImage:{'radial-glow':'radial-gradient(circle at center,rgba(255,255,255,.03) 0%,rgba(5,5,5,0) 60%)','metallic-shine':'linear-gradient(110deg,transparent 20%,rgba(255,255,255,.1) 40%,rgba(255,255,255,.4) 50%,rgba(255,255,255,.1) 60%,transparent 80%)'},
-      animation:{'fade-in-up':'fadeInUp .6s cubic-bezier(.16,1,.3,1) forwards','pulse-fast':'pulseOpacity 1.5s ease-in-out infinite','shine':'shine 4s ease-in-out infinite','data-flow':'dataFlow 2s linear infinite','data-flow-fast':'dataFlow 1s linear infinite'},
-      keyframes:{fadeInUp:{'0%':{opacity:'0',transform:'translateY(15px)'},'100%':{opacity:'1',transform:'translateY(0)'}},pulseOpacity:{'0%,100%':{opacity:'.3'},'50%':{opacity:'1',filter:'drop-shadow(0 0 4px rgba(255,255,255,.8))'}},shine:{'0%':{backgroundPosition:'200% center'},'100%':{backgroundPosition:'-200% center'}},dataFlow:{'0%':{transform:'translateY(-100%)',opacity:'0'},'20%':{opacity:'1'},'80%':{opacity:'1'},'100%':{transform:'translateY(400px)',opacity:'0'}}}
-    }}};
-  </script>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="theme-color" content="#050505" />
+  <title>TwineRun — Make your agent cheaper without making it worse</title>
+  <meta name="description" content="TwineRun is profile-guided optimization for AI agents. Join the private beta." />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="TwineRun — Profile-guided optimization for AI agents" />
+  <meta property="og:description" content="Make your agent cheaper without making it worse." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
   <style>
-    .noise-bg::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:50;opacity:.04;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")}
-    .btn-machined{position:relative;transition:all .15s cubic-bezier(.16,1,.3,1);box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 1px 2px rgba(0,0,0,.4)}
-    .btn-machined:hover{background-color:#1a1a1a;border-color:rgba(255,255,255,.3);box-shadow:inset 0 1px 0 rgba(255,255,255,.15),0 2px 8px rgba(0,0,0,.5);transform:translateY(-1px)}
-    .btn-machined:active{transform:translateY(0);box-shadow:inset 0 1px 4px rgba(0,0,0,.8)}
-    .btn-light:hover{background:#fff!important;color:#050505!important}
-    .text-metallic{background:linear-gradient(180deg,#fff 0%,#a1a1aa 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-    .delay-50{animation-delay:50ms}.delay-100{animation-delay:100ms}.delay-150{animation-delay:150ms}.delay-200{animation-delay:200ms}.delay-250{animation-delay:250ms}.delay-300{animation-delay:300ms}.delay-350{animation-delay:350ms}.node-transition{transition:all .3s cubic-bezier(.16,1,.3,1)}
-    @media(prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
+    :root{--black:#050505;--silver:#f1f2f3;--silver2:#c9cdd1;--muted:#979ca1;--line:rgba(255,255,255,.14);--panel:rgba(8,8,8,.48)}
+    *{box-sizing:border-box}
+    html,body{margin:0;min-height:100%;background:var(--black);color:#fff;font-family:Inter,system-ui,sans-serif}
+    body{overflow-x:hidden}
+    a{color:inherit;text-decoration:none}
+    button,input{font:inherit}
+    .page{position:relative;min-height:100svh;overflow:hidden;background:#050505;isolation:isolate}
+    .bg-wrap{position:absolute;inset:-8%;z-index:-5;overflow:hidden;pointer-events:none}
+    .bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:grayscale(1) saturate(0) contrast(1.32) brightness(.72);opacity:.78;transform:scale(1.1) translate3d(-1%,0,0);animation:drift 16s ease-in-out infinite;will-change:transform}
+    .bg-ghost{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:grayscale(1) saturate(0) contrast(1.45) brightness(.45) blur(1px);opacity:.32;mix-blend-mode:screen;transform:scale(1.18) translate3d(1.5%,1%,0);animation:ghost 20s ease-in-out infinite reverse;will-change:transform}
+    .veil{position:absolute;inset:0;z-index:-4;pointer-events:none;background:
+      linear-gradient(to bottom,rgba(5,5,5,.97) 0,rgba(5,5,5,.72) 9%,rgba(5,5,5,.12) 24%,rgba(5,5,5,.07) 72%,rgba(5,5,5,.78) 100%),
+      radial-gradient(ellipse at 50% 47%,rgba(5,5,5,.98) 0%,rgba(5,5,5,.92) 17%,rgba(5,5,5,.72) 34%,rgba(5,5,5,.18) 64%,rgba(5,5,5,.08) 100%)}
+    .grain{position:absolute;inset:0;z-index:10;pointer-events:none;opacity:.055;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.95' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.6'/%3E%3C/svg%3E")}
+    @keyframes drift{0%,100%{transform:scale(1.10) translate3d(-1.8%,-.8%,0)}50%{transform:scale(1.16) translate3d(1.8%,1.2%,0)}}
+    @keyframes ghost{0%,100%{transform:scale(1.19) translate3d(2%,1%,0)}50%{transform:scale(1.14) translate3d(-1.6%,-1%,0)}}
+    .shell{width:min(1540px,100%);min-height:100svh;margin:0 auto;padding:0 42px;display:grid;grid-template-rows:88px 1fr 72px;position:relative;z-index:1}
+    header{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.07)}
+    .brand{display:flex;align-items:center;gap:13px;font-weight:600;letter-spacing:-.03em;font-size:19px}
+    .mark{width:34px;height:24px;display:block}
+    .mark path{stroke:#e7e9eb;stroke-width:1.5;fill:none;stroke-linecap:round}.mark circle{fill:#eceeef}
+    nav{display:flex;align-items:center;gap:12px;font-size:13px;color:#c4c7ca}
+    .nav-link{padding:10px 12px;border:1px solid transparent;border-radius:10px;transition:.18s ease}
+    .nav-link:hover{border-color:rgba(255,255,255,.13);background:rgba(255,255,255,.04);color:#fff}
+    .book{padding:10px 15px;border:1px solid rgba(255,255,255,.2);border-radius:10px;background:rgba(10,10,10,.38);backdrop-filter:blur(14px);color:#f3f4f5}
+    main{display:flex;align-items:center;justify-content:center;text-align:center;padding:52px 0 72px}
+    .hero{width:min(880px,100%);display:flex;flex-direction:column;align-items:center}
+    .pill{display:inline-flex;align-items:center;gap:9px;padding:8px 13px;border-radius:999px;border:1px solid rgba(255,255,255,.16);background:rgba(10,10,10,.42);backdrop-filter:blur(16px);font-size:11px;letter-spacing:.19em;text-transform:uppercase;color:#d8dbde;box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
+    .dot{width:5px;height:5px;border-radius:50%;background:#e5e7e9;box-shadow:0 0 10px rgba(255,255,255,.55)}
+    h1{margin:28px 0 18px;font-size:clamp(56px,6.25vw,96px);line-height:.96;letter-spacing:-.055em;font-weight:500;text-wrap:balance}
+    h1 .serif{font-family:"DM Serif Display",serif;font-style:italic;font-weight:400;letter-spacing:-.045em;background:linear-gradient(180deg,#fff 0%,#a7abb0 100%);-webkit-background-clip:text;background-clip:text;color:transparent}
+    .sub{margin:0;color:#a7acb1;font-size:clamp(16px,1.4vw,20px);line-height:1.6;max-width:640px}
+    .form{width:min(620px,100%);display:flex;gap:8px;margin-top:34px;padding:7px;border:1px solid rgba(255,255,255,.16);border-radius:14px;background:rgba(6,6,6,.62);backdrop-filter:blur(20px);box-shadow:0 18px 80px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.04)}
+    .form input{flex:1;min-width:0;border:0;outline:0;color:#f1f2f3;background:transparent;padding:0 16px;font-size:15px}
+    .form input::placeholder{color:#6f7479}
+    .join{border:1px solid rgba(255,255,255,.45);border-radius:10px;padding:14px 22px;min-width:156px;font-weight:600;color:#060606;background:linear-gradient(135deg,#858a8f 0%,#f3f4f5 47%,#adb2b7 100%);cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.9),0 5px 24px rgba(255,255,255,.08);transition:transform .16s ease,filter .16s ease}
+    .join:hover{filter:brightness(1.07);transform:translateY(-1px)}.join:disabled{opacity:.55;cursor:wait;transform:none}
+    .status{height:21px;margin-top:12px;font-size:12px;color:#9ca1a6}.status.ok{color:#eceeef}.status.err{color:#bd8e8e}
+    .meta{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:13px;font-size:12px;color:#777d82}
+    .meta span+span:before{content:"·";margin-right:10px;color:#4f5459}
+    .talk{margin-top:34px;display:flex;flex-direction:column;align-items:center;gap:10px;color:#858a90;font-size:12px}
+    .call{display:inline-flex;align-items:center;gap:9px;padding:11px 15px;border:1px solid rgba(255,255,255,.15);border-radius:10px;background:rgba(6,6,6,.35);backdrop-filter:blur(12px);color:#dfe1e3;transition:.18s ease}
+    .call:hover{border-color:rgba(255,255,255,.28);background:rgba(255,255,255,.05)}
+    footer{display:flex;align-items:center;justify-content:space-between;border-top:1px solid rgba(255,255,255,.07);font-size:11px;color:#666c71}
+    .footlinks{display:flex;align-items:center;gap:18px}.footlinks a:hover{color:#d7dade}
+    @media(max-width:720px){.shell{padding:0 18px;grid-template-rows:76px 1fr 64px}.brand{font-size:17px}.mark{width:30px}.nav-link{display:none}.book{padding:9px 12px;font-size:12px}main{padding:38px 0 48px}.hero{width:100%}h1{font-size:clamp(46px,14vw,68px);line-height:.98;margin-top:22px}.sub{font-size:15px;max-width:390px}.form{flex-direction:column;border-radius:13px;padding:6px}.form input{height:50px}.join{width:100%;min-width:0}.meta{flex-wrap:wrap}.talk{margin-top:26px}footer{font-size:10px}.footlinks{gap:12px}.bg{opacity:.68;transform:scale(1.38)}.veil{background:linear-gradient(to bottom,rgba(5,5,5,.96),rgba(5,5,5,.22) 22%,rgba(5,5,5,.22) 72%,rgba(5,5,5,.82)),radial-gradient(ellipse at 50% 45%,rgba(5,5,5,.98),rgba(5,5,5,.86) 28%,rgba(5,5,5,.18) 65%)}}
+    @media(prefers-reduced-motion:reduce){.bg,.bg-ghost{animation:none!important}.join,.nav-link,.book,.call{transition:none!important}}
   </style>
 </head>
-<body class="bg-graphite-900 text-silver-light antialiased selection:bg-silver-light selection:text-graphite-900 overflow-x-hidden">
-<script>
-  const CALENDLY_URL='https://calendly.com/ishtrivedi18/30min?month=2026-09';
-  document.addEventListener('DOMContentLoaded',()=>document.querySelectorAll('.js-book-call').forEach(el=>el.addEventListener('click',e=>{e.preventDefault();window.open(CALENDLY_URL,'_blank','noopener,noreferrer')})));
-</script>
-<div class="noise-bg min-h-screen relative flex flex-col">
-  <div class="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[800px] bg-radial-glow opacity-50 pointer-events-none"></div>
-  <header class="w-full px-6 py-6 md:px-12 md:py-8 flex items-center justify-between z-10 opacity-0 animate-fade-in-up">
-    <span class="font-mono text-sm tracking-widest text-silver-light font-medium">AGENTPGO</span>
-    <a href="https://calendly.com/ishtrivedi18/30min?month=2026-09" class="js-book-call flex items-center gap-2 text-xs font-mono tracking-wider text-graphite-muted hover:text-silver-light transition-colors group"><span>Book a call</span><iconify-icon icon="lucide:arrow-right" class="group-hover:translate-x-1 transition-transform"></iconify-icon></a>
-  </header>
-  <main class="flex-1 flex flex-col xl:flex-row items-center justify-center w-full max-w-[1440px] mx-auto px-6 md:px-12 py-12 xl:py-0 gap-16 xl:gap-8 z-10">
-    <section class="w-full xl:w-1/2 flex flex-col justify-center max-w-2xl xl:pr-12"><div class="space-y-6">
-      <div class="opacity-0 animate-fade-in-up delay-50"><p class="font-mono text-[10px] sm:text-xs tracking-[0.2em] text-graphite-muted uppercase">Profile-guided optimization for AI agents</p></div>
-      <h1 class="text-4xl sm:text-5xl md:text-6xl lg:text-[4rem] leading-[1.1] font-medium tracking-tight opacity-0 animate-fade-in-up delay-100">Make your agent cheaper<br><span class="text-metallic relative inline-block overflow-hidden group">without making it dumber.<span class="absolute inset-0 bg-metallic-shine bg-[length:200%_auto] animate-shine opacity-0 group-hover:opacity-100 transition-opacity"></span></span></h1>
-      <p class="text-graphite-muted text-lg sm:text-xl leading-relaxed max-w-xl opacity-0 animate-fade-in-up delay-150">AgentPGO profiles how your agent actually runs, finds wasted model spend and context, then searches for a faster, lower-cost execution policy without sacrificing task quality.</p>
-      <div class="pt-4 flex flex-col sm:flex-row items-start sm:items-center gap-4 opacity-0 animate-fade-in-up delay-200"><button class="js-book-call btn-machined bg-graphite-800 border border-silver-border text-silver-light px-6 py-3 rounded-[10px] font-mono text-sm tracking-wide flex items-center justify-center gap-2 min-w-[240px]">Book an optimization call</button><span class="text-graphite-muted font-mono text-xs tracking-wider">For builders shipping real agents.</span></div>
-    </div></section>
-    <section class="w-full xl:w-1/2 flex items-center justify-center xl:justify-end opacity-0 animate-fade-in-up delay-250" aria-label="Agent optimization profiler visualization"><div class="relative w-full max-w-lg border border-silver-border rounded-xl bg-graphite-900/50 backdrop-blur-sm p-6 sm:p-10 flex flex-col items-center overflow-hidden">
-      <div class="w-full flex justify-between items-center font-mono text-[10px] tracking-widest text-graphite-muted mb-8 relative"><span id="pipe-trace">TRACE</span><iconify-icon icon="lucide:arrow-right" class="text-silver-border"></iconify-icon><span id="pipe-profile">PROFILE</span><iconify-icon icon="lucide:arrow-right" class="text-silver-border"></iconify-icon><span id="pipe-search">SEARCH</span><iconify-icon icon="lucide:arrow-right" class="text-silver-border"></iconify-icon><span id="pipe-verify">VERIFY</span><iconify-icon icon="lucide:arrow-right" class="text-silver-border"></iconify-icon><span id="pipe-optimize">OPTIMIZE</span></div>
-      <div class="w-full relative flex flex-col gap-4 mb-10">
-        <div class="absolute left-[40px] top-4 bottom-4 w-px bg-silver-border -z-10 overflow-hidden"><div class="absolute top-0 left-0 w-full h-[30px] bg-gradient-to-b from-transparent via-silver-light to-transparent animate-data-flow"></div><div class="absolute top-0 left-0 w-full h-[20px] bg-gradient-to-b from-transparent via-white to-transparent animate-data-flow-fast delay-75"></div></div>
-        <div class="flex items-center gap-4 w-full"><div class="w-2 h-2 rounded-full border border-silver-dark bg-graphite-900 z-10 shrink-0 ml-[36px]"></div><div class="flex-1 grid grid-cols-[1fr_2fr_1.5fr] gap-4 py-2 border-b border-silver-border/50 font-mono text-xs"><span class="text-silver-dark">PLAN</span><span class="text-silver-light">Claude Sonnet</span><span class="text-graphite-muted text-right flex flex-col items-end"><span>12.4k ctx</span><span class="text-[9px] text-silver-dark mt-0.5">0.8s · $0.04</span></span></div></div>
-        <div class="flex items-center gap-4 w-full relative"><div id="profiler-line" class="absolute -left-6 top-1/2 w-4 h-px bg-silver-dark/40 before:content-[''] before:absolute before:left-0 before:-top-1 before:w-2 before:h-2 before:bg-silver-dark/40 before:rounded-sm transition-opacity duration-300"></div><div id="dot-2" class="w-2 h-2 rounded-full border border-silver-light bg-silver-light z-10 shrink-0 ml-[36px] shadow-[0_0_8px_rgba(255,255,255,0.3)] transition-all duration-300"></div><div id="node-2" class="flex-1 grid grid-cols-[1fr_2fr_1.5fr] gap-4 py-2 border border-silver-border/80 bg-graphite-800/80 rounded pl-2 pr-0 font-mono text-xs relative overflow-hidden node-transition"><div id="node-2-highlight" class="absolute left-0 top-0 bottom-0 w-px bg-silver-light transition-all duration-300"></div><span class="text-silver-light">SEARCH</span><span class="text-silver-light flex flex-col"><span id="node-2-model">GPT mini</span><span id="node-2-old-model" class="text-[9px] text-graphite-muted line-through hidden">Opus</span></span><span class="text-silver-light text-right pr-2 flex flex-col items-end"><span id="node-2-ctx">3.2k ctx</span><span id="node-2-metrics" class="text-[9px] text-silver-dark mt-0.5">0.2s · $0.001</span></span></div></div>
-        <div class="flex items-center gap-4 w-full"><div class="w-2 h-2 rounded-full border border-silver-dark bg-graphite-900 z-10 shrink-0 ml-[36px]"></div><div id="node-3" class="flex-1 grid grid-cols-[1fr_2fr_1.5fr] gap-4 py-2 border-b border-silver-border/50 font-mono text-xs node-transition"><span class="text-silver-dark">REASON</span><span class="text-silver-light" id="node-3-model">Claude Opus</span><span class="text-graphite-muted text-right flex flex-col items-end"><span id="node-3-ctx">18.1k ctx</span><span id="node-3-metrics" class="text-[9px] text-silver-dark mt-0.5">2.4s · $0.27</span></span></div></div>
-        <div class="flex items-center gap-4 w-full"><div class="w-2 h-2 rounded-full border border-silver-dark bg-graphite-900 z-10 shrink-0 ml-[36px]"></div><div class="flex-1 grid grid-cols-[1fr_2fr_1.5fr] gap-4 py-2 font-mono text-xs"><span class="text-silver-dark">ANSWER</span><span class="text-silver-light">GPT mini</span><span class="text-graphite-muted text-right flex flex-col items-end"><span>2.1k ctx</span><span class="text-[9px] text-silver-dark mt-0.5">0.1s · $0.001</span></span></div></div>
-      </div>
-      <div class="w-full flex justify-between px-2 mb-6 font-mono text-[9px] text-graphite-muted uppercase tracking-wider items-center"><div class="flex gap-8"><span>MODEL</span><span>CONTEXT</span></div><div class="text-right flex flex-col items-end"><span>TOTAL ESTIMATE</span><span id="total-cost" class="text-silver-light text-xs font-medium transition-colors duration-300">$0.312 / run</span></div></div>
-      <div class="w-full pt-6 border-t border-silver-border/60 flex flex-col items-center gap-3"><div class="flex items-center gap-3 font-mono text-[11px] text-silver-dark"><span>Current policy</span><iconify-icon icon="lucide:arrow-right"></iconify-icon><span class="text-silver-light" id="policy-status">Candidate policy</span><iconify-icon icon="lucide:arrow-right"></iconify-icon><span>Quality gate</span></div><div id="objective-function" class="font-mono text-[10px] text-graphite-muted bg-graphite-800/50 px-3 py-1 rounded-full border border-silver-border/30 transition-all duration-300">minimize cost + latency subject to quality ≥ baseline</div></div>
-    </div></section>
-  </main>
-  <section class="w-full max-w-3xl mx-auto px-6 py-24 text-center z-10 opacity-0 animate-fade-in-up delay-300"><h2 class="text-2xl sm:text-3xl font-medium tracking-tight mb-6">I'm building this with real workloads.</h2><p class="text-graphite-muted text-base sm:text-lg mb-10 max-w-2xl mx-auto leading-relaxed">If you run an agent in production or spend meaningful money on inference, I want to profile it. Bring your traces, evals, or simply the system you're building.</p><div class="flex flex-col items-center gap-4"><button class="js-book-call btn-machined btn-light bg-silver-light text-graphite-900 border border-transparent px-6 py-2.5 rounded-[10px] font-mono text-sm tracking-wide flex items-center justify-center gap-2">Book a call <iconify-icon icon="lucide:arrow-right"></iconify-icon></button><span class="text-graphite-muted font-mono text-[11px] tracking-wider uppercase">Early design partners · Indie builders · AI teams</span></div></section>
-  <footer class="w-full px-6 py-8 md:px-12 flex flex-col sm:flex-row items-center justify-between border-t border-silver-border/40 z-10 mt-auto opacity-0 animate-fade-in-up delay-350"><div class="flex flex-col sm:flex-row items-center gap-2 sm:gap-6 font-mono text-[11px] tracking-widest text-graphite-muted uppercase mb-4 sm:mb-0"><span>AGENTPGO</span><span class="hidden sm:inline-block w-1 h-1 rounded-full bg-graphite-700"></span><span>2026</span></div><div class="font-mono text-[11px] text-graphite-muted flex flex-wrap items-center justify-center gap-3"><div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-green-500/80 animate-pulse-fast"></span><span>Building in public.</span></div><span class="text-graphite-700">·</span><a href="https://x.com/auroriumnexusand" target="_blank" rel="noopener noreferrer" class="hover:text-silver-light transition-colors">X</a><span class="text-graphite-700">·</span><a href="https://calendly.com/ishtrivedi18/30min?month=2026-09" target="_blank" rel="noopener noreferrer" class="hover:text-silver-light transition-colors">Calendly</a></div></footer>
+<body>
+<div class="page">
+  <div class="bg-wrap" aria-hidden="true"><img class="bg" src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAcFBQYFBAcGBgYIBwcICxILCwoKCxYPEA0SGhYbGhkWGRgcICgiHB4mHhgZIzAkJiorLS4tGyIyNTEsNSgsLSz/2wBDAQcICAsJCxULCxUsHRkdLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCz/wgARCALMA70DASIAAhEBAxEB/8QAHAABAAIDAQEBAAAAAAAAAAAAAAIEAQMFBgcI/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEAMQAAAB8Cajaq4LaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLaoLapktba9g0VvVdE8I6PdPIu1I4b0lQ4z11Q847ms44AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANlrX0Sk7eg5eezrOa7XIO1v8dqJd/zw9H2fBj0/U8IPT2PID2G3xQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAtdLj3TuXfMzOxc8rk73Fzk5unZrAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEs5MQSMbZbiWzVMo65wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAG5EzqBKIniIlZ1WijGUQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABYDXrn0jlZ+gd4+Y972PEMXPL8o975/y+wqxnAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAbHcKVr3vaOJ1/JeSPbeW89Et1cAs3Dl2+loOXCcAAAAAAAAAAAAAAAAAAAAAAAABOHSNUvQ1zjOpA52OnpKS3sKOO1qOUv5Oe71AoR6I4kb9AAAAAAAAAAAAAAAAAAbvRfTjzPqeF4E9P5HlwJwBm11jl9O8NdTNEzCEilGUQAAAAAAAAAAAAAAAAAAAAAAAB0+ZuPV9Hx2T0s/MDsX/Lj1Onzg9VV8+PUWvGSPRT8wPT1+Bgc/ZrAAAAAAAAAAAAAAAB1znfSvRcs7Pz3i8c31QM9Ap9e9dK+VEtUs6TFWVcbNG4r65RAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACX0k4n0qp85Ov4rVpM4ZMWt/dKnR2RM1dVcGkV2ga84I2dO8pRlEAAAAAAAAAAAAAAAAAHqzyj7J8jK4DZ9UPk4AAAAAAAAAAAB6g8u9l5Q0JfXT5A6/0I+TJwBuNO7V9EPn2v2/iAAAAAABc6P1k52jmeCLXJiBYIdbf0yG6VMnS1YJswMVJVjEWBnGTO7VtKMZRAAAAAAAAAAAAAAAAAF+hfPpfyX614c869xbPnnWe8Plr13pT5Y+jWD5izIg+iUjxD03uj4+v+3PnL2fqj5E+mTPmD0P0I+OOv9VPibr+7Plr6FsPnNr1eTy30Xi++Phn0vzfpDxC17k+SvQ9c8P9Is+gPjHsK8CXjvSebAAAABIj7LterNngef5cnXAXyHa3WhKNUzzMQNuzXMzWlWMaZRAMsYJbadgrxlEAAAAAAAAAAAAAAAAAX6HdPe2er0D8/fQfZ7DyPp9u4812K+04HqfK+qPJdHj+hK3m+pwz3tTqc08F0sd08v6zR2j45TtUx9l+NfVD5j98+adQ+c+y3+QPeeKsekLvnPR+cL...<truncated_base64>.../9k=" alt="" /><img class="bg-ghost" src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/...<same_base64>.../9k=" alt="" /></div>
+  <div class="veil" aria-hidden="true"></div><div class="grain" aria-hidden="true"></div>
+  <div class="shell">
+    <header>
+      <a class="brand" href="/" aria-label="TwineRun home">
+        <svg class="mark" viewBox="0 0 40 28" aria-hidden="true"><path d="M2 4c8 0 9 20 18 20s10-20 18-20"/><path d="M2 10c8 0 9 8 18 8s10-8 18-8"/><path d="M2 18c8 0 9-8 18-8s10 8 18 8"/><path d="M2 24c8 0 9-20 18-20s10 20 18 20"/><circle cx="2" cy="4" r="1.5"/><circle cx="2" cy="10" r="1.5"/><circle cx="2" cy="18" r="1.5"/><circle cx="2" cy="24" r="1.5"/><circle cx="38" cy="4" r="1.5"/><circle cx="38" cy="10" r="1.5"/><circle cx="38" cy="18" r="1.5"/><circle cx="38" cy="24" r="1.5"/></svg>
+        <span>TwineRun</span>
+      </a>
+      <nav aria-label="Primary"><a class="nav-link" href="https://x.com/auroriumnexusand" target="_blank" rel="noopener">X</a><a class="book" href="https://calendly.com/ishtrivedi18/30min?month=2026-09" target="_blank" rel="noopener">Book a call</a></nav>
+    </header>
+    <main>
+      <section class="hero" aria-labelledby="headline">
+        <div class="pill"><span class="dot"></span>Private beta · September 2026</div>
+        <h1 id="headline">Make your agent <span class="serif">cheaper.</span><br/>Without making it worse.</h1>
+        <p class="sub">Profile-guided optimization for AI agents. TwineRun finds cheaper model assignments and verifies them against your evals before you ship.</p>
+        <form id="waitlist" class="form" novalidate>
+          <label for="email" style="position:absolute;left:-9999px">Email address</label>
+          <input id="email" name="email" type="email" autocomplete="email" placeholder="you@company.com" required />
+          <button id="join" class="join" type="submit">Join waitlist →</button>
+        </form>
+        <div id="status" class="status" role="status" aria-live="polite"></div>
+        <div class="meta"><span>Early access</span><span>Indie builders + AI teams</span><span>No spam</span></div>
+        <div class="talk"><span>Running an agent in production already?</span><a class="call" href="https://calendly.com/ishtrivedi18/30min?month=2026-09" target="_blank" rel="noopener">Book an optimization call ↗</a></div>
+      </section>
+    </main>
+    <footer><span>© 2026 TwineRun</span><div class="footlinks"><a href="https://x.com/auroriumnexusand" target="_blank" rel="noopener">X</a><a href="https://calendly.com/ishtrivedi18/30min?month=2026-09" target="_blank" rel="noopener">Calendly</a></div></footer>
+  </div>
 </div>
 <script>
-  document.addEventListener('DOMContentLoaded',()=>{
-    const ids=['trace','profile','search','verify','optimize']; const pipes=Object.fromEntries(ids.map(x=>[x,document.getElementById('pipe-'+x)]));
-    const n2Node=document.getElementById('node-2'),n2Model=document.getElementById('node-2-model'),n2OldModel=document.getElementById('node-2-old-model'),n2Ctx=document.getElementById('node-2-ctx'),n2Metrics=document.getElementById('node-2-metrics'),n2Dot=document.getElementById('dot-2'),n2Line=document.getElementById('node-2-highlight'),profilerLine=document.getElementById('profiler-line'),n3Node=document.getElementById('node-3'),n3Model=document.getElementById('node-3-model'),n3Ctx=document.getElementById('node-3-ctx'),n3Metrics=document.getElementById('node-3-metrics'),totalCost=document.getElementById('total-cost'),policyStatus=document.getElementById('policy-status'),objFunc=document.getElementById('objective-function');
-    const wait=ms=>new Promise(r=>setTimeout(r,ms)); const reset=()=>Object.values(pipes).forEach(el=>el.className='transition-colors duration-300 text-graphite-muted');
-    async function cycle(){
-      reset(); pipes.trace.className='transition-colors duration-300 text-silver-light font-medium'; profilerLine.classList.add('opacity-0'); n2Model.textContent='Claude Opus'; n2OldModel.classList.add('hidden'); n2Ctx.textContent='14.2k ctx'; n2Metrics.textContent='1.8s · $0.21'; n2Node.className='flex-1 grid grid-cols-[1fr_2fr_1.5fr] gap-4 py-2 border-b border-silver-border/50 font-mono text-xs node-transition'; n2Dot.className='w-2 h-2 rounded-full border border-silver-dark bg-graphite-900 z-10 shrink-0 ml-[36px] transition-all duration-300'; n2Line.classList.add('opacity-0'); n3Model.textContent='Claude Opus'; n3Ctx.textContent='18.1k ctx'; n3Metrics.textContent='2.4s · $0.27'; totalCost.textContent='$0.521 / run'; totalCost.classList.remove('text-green-400'); policyStatus.textContent='Profiling baseline...'; objFunc.classList.remove('border-green-500/50','bg-green-900/10'); await wait(1500);
-      reset(); pipes.profile.className='transition-colors duration-300 text-silver-light font-medium animate-pulse'; profilerLine.classList.remove('opacity-0'); profilerLine.classList.add('animate-pulse-fast'); policyStatus.textContent='Identifying bottlenecks'; n2Node.classList.add('bg-graphite-800/50'); n3Node.classList.add('bg-graphite-800/50'); await wait(1500);
-      reset(); pipes.search.className='transition-colors duration-300 text-silver-light font-medium'; policyStatus.textContent='Searching execution policies'; profilerLine.classList.add('opacity-0'); n2Node.className='flex-1 grid grid-cols-[1fr_2fr_1.5fr] gap-4 py-2 border border-silver-border/80 bg-graphite-800/80 rounded pl-2 pr-0 font-mono text-xs relative overflow-hidden node-transition'; n2Dot.className='w-2 h-2 rounded-full border border-silver-light bg-silver-light z-10 shrink-0 ml-[36px] shadow-[0_0_8px_rgba(255,255,255,0.3)] transition-all duration-300 animate-pulse-fast'; n2Line.classList.remove('opacity-0'); n2Model.textContent='GPT mini'; n2OldModel.classList.remove('hidden');
-      let ctx=14.2,cost=.21,lat=1.8,tcost=.521; for(let i=0;i<10;i++){ctx-=(14.2-3.2)/10;cost-=(.21-.001)/10;lat-=(1.8-.2)/10;tcost-=(.521-.312)/10;n2Ctx.textContent=`${ctx.toFixed(1)}k ctx`;n2Metrics.textContent=`${lat.toFixed(1)}s · $${cost.toFixed(3)}`;totalCost.textContent=`$${tcost.toFixed(3)} / run`;await wait(60)} await wait(800);
-      reset(); pipes.verify.className='transition-colors duration-300 text-silver-light font-medium'; policyStatus.textContent='Verifying quality gate'; n2Node.classList.add('border-silver-light/50'); await wait(1200);
-      reset(); pipes.optimize.className='transition-colors duration-300 text-silver-light font-medium'; policyStatus.textContent='Policy applied'; totalCost.classList.add('text-green-400'); objFunc.classList.add('border-green-500/50','bg-green-900/10'); n2Dot.classList.remove('animate-pulse-fast'); await wait(2500); cycle();
-    } setTimeout(cycle,500);
+  const form=document.getElementById('waitlist');
+  const input=document.getElementById('email');
+  const btn=document.getElementById('join');
+  const statusEl=document.getElementById('status');
+  form.addEventListener('submit',async(e)=>{
+    e.preventDefault();
+    const email=input.value.trim();
+    if(!/^\S+@\S+\.\S+$/.test(email)){statusEl.className='status err';statusEl.textContent='Enter a valid email.';input.focus();return;}
+    btn.disabled=true;btn.textContent='Joining…';statusEl.textContent='';
+    try{
+      const r=await fetch('/api/waitlist',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email,source:'landing',ua:navigator.userAgent})});
+      const data=await r.json().catch(()=>({}));
+      if(!r.ok) throw new Error(data.error||'Could not join right now.');
+      statusEl.className='status ok';statusEl.textContent="You're on the list. We'll email you when private beta opens.";input.value='';btn.textContent='Joined ✓';
+    }catch(err){statusEl.className='status err';statusEl.textContent=err.message||'Could not join right now.';btn.disabled=false;btn.textContent='Join waitlist →';}
   });
 </script>
 </body>
