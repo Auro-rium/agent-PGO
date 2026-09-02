@@ -13,6 +13,8 @@ interface OptimizerTraceProps {
 export const OptimizerTrace: React.FC<OptimizerTraceProps> = ({ events, project }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<string>('ALL');
+  const nodeLatencyMax = Math.max(1, ...project.nodes.flatMap((node) => [node.baselineLatencySec, node.optimizedLatencySec]).filter((value) => value > 0));
+  const formatP95 = (value: number) => value > 0 ? `${value.toFixed(1)}s` : '—';
 
   const filteredEvents = events.filter((evt) => {
     const matchesSearch =
@@ -70,21 +72,21 @@ export const OptimizerTrace: React.FC<OptimizerTraceProps> = ({ events, project 
       <div className="bg-[#090A0B] border border-white/[0.06] rounded-lg p-4 space-y-3">
         <div className="text-[10px] font-semibold uppercase text-[#5C6268] tracking-wider flex items-center justify-between">
           <span>Execution Latency Waterfall (Baseline vs Compiled)</span>
-          <span className="text-[#A0A5AA]">{project.baselineLatencyP95.toFixed(1)}s → {project.optimizedLatencyP95.toFixed(1)}s P95</span>
+          <span className="text-[#A0A5AA]">{formatP95(project.baselineLatencyP95)} → {formatP95(project.optimizedLatencyP95)} P95</span>
         </div>
 
         <div className="space-y-2 text-xs">
           {project.nodes.map((node) => {
-            const baselineWidth = Math.max(8, (node.baselineLatencySec / 10) * 100);
-            const optimizedWidth = Math.max(8, (node.optimizedLatencySec / 10) * 100);
+            const baselineWidth = node.baselineLatencySec > 0 ? Math.max(8, (node.baselineLatencySec / nodeLatencyMax) * 100) : 0;
+            const optimizedWidth = node.optimizedLatencySec > 0 ? Math.max(8, (node.optimizedLatencySec / nodeLatencyMax) * 100) : 0;
 
             return (
               <div key={node.id} className="space-y-1">
                 <div className="flex items-center justify-between text-[11px] text-[#A0A5AA]">
                   <span className="font-medium text-[#F2F3F4]">{node.name}</span>
                   <span>
-                    {node.baselineLatencySec.toFixed(1)}s →{' '}
-                    <strong className="text-[#D7DADD]">{node.optimizedLatencySec.toFixed(1)}s</strong>
+                    {formatP95(node.baselineLatencySec)} →{' '}
+                    <strong className="text-[#D7DADD]">{formatP95(node.optimizedLatencySec)}</strong>
                   </span>
                 </div>
 
@@ -117,6 +119,11 @@ export const OptimizerTrace: React.FC<OptimizerTraceProps> = ({ events, project 
         </div>
 
         <div className="flex-1 p-4 overflow-y-auto text-xs space-y-1.5 selection:bg-white/[0.1]">
+          {filteredEvents.length === 0 && (
+            <div className="p-2 text-xs text-[#7D858C]">
+              {events.length === 0 ? 'No persisted optimizer events are available for this run.' : 'No events match the current filters.'}
+            </div>
+          )}
           {filteredEvents.map((evt) => {
             let badgeStyle = 'text-[#5C6268] bg-[#050505] border-white/[0.04]';
             if (evt.type === 'PASS') {

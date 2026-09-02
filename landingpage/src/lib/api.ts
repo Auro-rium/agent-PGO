@@ -1,4 +1,4 @@
-import { AgentProject, ApiCollection, BaselineRun, EvalCase, EvalRun, EvalRunCase, EvalSuite, EvalSuiteCreateInput, JsonObject, OptimizationCandidate, OptimizationRecommendation, OptimizationRun, OptimizerEvent, ProfileRun, ProjectLayout, ProjectSettings, ProjectSetupState, TraceDetail, TraceSpan } from "../types";
+import { AgentProject, ApiCollection, BaselineRun, EvalCase, EvalRun, EvalRunCase, EvalSuite, EvalSuiteCreateInput, JsonObject, OptimizationCandidate, OptimizationRecommendation, OptimizationRun, OptimizerEvent, ProfileRun, ProjectLayout, ProjectSettings, ProjectSetupState, TraceDetail, TraceSpan, EntitlementState, ReferralSummary } from "../types";
 import { adaptBaselineRun, adaptEvalCase, adaptEvalRun, adaptEvalRunCase, adaptEvalSuite, adaptLayout, adaptOptimizationRun, adaptRecommendation, adaptProject, adaptCandidate, adaptOptimizerEvent, adaptOnboarding, adaptProfileRun, adaptSettings, adaptTraceDetail, adaptTraceSpan } from "./adapters";
 
 const configuredBase = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
@@ -121,12 +121,20 @@ export const api = {
     if (typeof auth.accessToken === "string") storeToken(auth.accessToken);
     return auth;
   },
-  async signUp(name: string, email: string, password: string): Promise<Record<string, unknown>> {
-    const auth = await request<Record<string, unknown>>("/auth/signup", json({ name, email, password }));
+  async signUp(name: string, email: string, password: string, referralCode?: string): Promise<Record<string, unknown>> {
+    const auth = await request<Record<string, unknown>>("/auth/signup", json({ name, email, password, ...(referralCode ? { referralCode } : {}) }));
     if (typeof auth.accessToken === "string") storeToken(auth.accessToken);
     return auth;
   },
   async logout(): Promise<void> { await request("/auth/logout", { method: "POST" }); },
+  async checkout(plan: "pro", referralCode?: string, idempotencyKey?: string): Promise<{ checkoutUrl: string; checkoutSessionId: string }> {
+    const payload = await request<Record<string, unknown>>("/billing/checkout", json({ plan, ...(referralCode ? { referralCode } : {}), idempotencyKey: idempotencyKey || crypto.randomUUID() }));
+    return { checkoutUrl: String(payload.checkoutUrl || payload.checkout_url || ""), checkoutSessionId: String(payload.checkoutSessionId || payload.checkout_session_id || payload.id || "") };
+  },
+  async entitlements(): Promise<EntitlementState> { return request<EntitlementState>("/entitlements"); },
+  async referrals(): Promise<ReferralSummary> { return request<ReferralSummary>("/referrals"); },
+  async generateReferralCode(): Promise<ReferralSummary> { return request<ReferralSummary>("/referrals/code", { method: "POST", body: JSON.stringify({}) }); },
+  async billingPortal(): Promise<{ url?: string; portalUrl?: string }> { return request<{ url?: string; portalUrl?: string }>("/billing/portal", { method: "POST", body: JSON.stringify({}) }); },
   async projects(): Promise<AgentProject[]> {
     const payload = await request<unknown>("/projects");
     const list = Array.isArray(payload) ? payload : ((payload as { projects?: unknown[] } | null)?.projects || []);

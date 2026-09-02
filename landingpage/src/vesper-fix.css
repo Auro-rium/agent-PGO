@@ -52,3 +52,32 @@ body.vesper-menu-open .vesper-backdrop {
 .profile-actions { display: flex; gap: 10px; margin-top: 28px; }
 .profile-actions .vesper-btn { flex: 1; }
 @media (max-width: 560px) { .auth-header { padding: 18px 20px; } .auth-main { min-height: calc(100dvh - 66px); padding: 22px 16px 40px; } .auth-card { padding: 26px 20px; } .auth-card h1 { font-size: 35px; } .auth-back-link { font-size: 12px; } .profile-actions { flex-direction: column; } }
+
+
+.auth-referral-note { color: #b8bdc1; font-size: 12px; line-height: 1.45; }
+.auth-referral-note strong { color: #f2f3f4; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 500; }
+.profile-main { align-items: start; }
+.profile-card { width: min(100%, 720px); }
+.profile-pending { display: flex; align-items: center; gap: 8px; margin-top: 16px; padding: 10px 12px; border: 1px solid rgba(210, 185, 120, .35); color: #d7bd87; background: rgba(92, 70, 22, .16); font-size: 12px; }
+.profile-status-dot { width: 7px; height: 7px; border-radius: 50%; background: #d7bd87; box-shadow: 0 0 12px rgba(215, 189, 135, .65); }
+.account-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 24px; text-align: left; }
+.account-panel { display: grid; gap: 7px; padding: 16px; border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.03); }
+.account-panel strong { color: #f2f3f4; font: 500 24px/1.1 Inter, sans-serif; letter-spacing: -.04em; }
+.account-panel small { color: #858b90; font-size: 11px; }
+.account-panel .vesper-btn { margin-top: 8px; width: max-content; min-height: 34px; font-size: 11px; }
+.account-label { color: #73777b; font: 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .13em; }
+.profile-referrals { margin-top: 10px; padding: 18px; border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.025); text-align: left; }
+.profile-referrals-head { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
+.profile-referrals h2 { margin-top: 8px; color: #f2f3f4; font: 500 19px/1.15 Inter, sans-serif; letter-spacing: -.03em; }
+.profile-referrals-head .vesper-btn { min-height: 34px; font-size: 11px; }
+.referral-link-row { display: flex; align-items: center; gap: 8px; margin-top: 18px; }
+.referral-link-row code { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 10px; border: 1px solid rgba(255,255,255,.08); color: #bfc5ca; background: #070809; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.referral-link-row .vesper-btn { min-height: 34px; font-size: 11px; }
+.referral-stats { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 16px; color: #858b90; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.referral-stats b { color: #f2f3f4; font-weight: 500; }
+.referral-explainer, .profile-muted { margin-top: 14px; color: #858b90; font-size: 12px; line-height: 1.5; }
+.vesper-btn--disabled, .vesper-btn:disabled { cursor: not-allowed; opacity: .42; filter: grayscale(1); }
+.vesper-checkout-note, .vesper-checkout-error { margin-top: 16px; font-size: 12px; }
+.vesper-checkout-note { color: #b8bdc1; }
+.vesper-checkout-error { color: #f0b6b6; }
+@media (max-width: 560px) { .account-grid { grid-template-columns: 1fr; } .profile-referrals-head { flex-direction: column; } .profile-referrals-head .vesper-btn { width: 100%; } .referral-link-row { align-items: stretch; flex-direction: column; } .referral-link-row .vesper-btn { width: 100%; } }

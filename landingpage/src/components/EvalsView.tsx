@@ -22,10 +22,11 @@ export const EvalsView: React.FC<EvalsViewProps> = ({ project, cases = [] }) => 
   }, [cases]);
 
   const categories = ['ALL', ...Array.from(new Set(cases.map((c) => c.category)))];
-  const evaluatedCount = cases.length || project.evalCasesCount;
+  const evaluatedCount = project.evalCasesCount || cases.length;
   const passedCount = cases.filter((item) => item.passed).length;
-  const passRate = evaluatedCount ? (passedCount / evaluatedCount) * 100 : 0;
-  const allPassed = evaluatedCount > 0 && passedCount === evaluatedCount;
+  const hasCaseData = cases.length > 0;
+  const passRate = hasCaseData ? (passedCount / cases.length) * 100 : null;
+  const allPassed = hasCaseData && passedCount === cases.length;
 
   const filteredCases = cases.filter((c) => {
     const matchesSearch =
@@ -56,7 +57,7 @@ export const EvalsView: React.FC<EvalsViewProps> = ({ project, cases = [] }) => 
 
           <div className="flex items-center gap-2">
             <span className="px-2 py-0.5 rounded bg-[#0F1113] border border-white/[0.1] text-xs font-semibold text-[#F2F3F4]">
-              {passRate.toFixed(1)}% PASS RATE
+              {passRate === null ? 'NO CASE DATA' : `${passRate.toFixed(1)}% PASS RATE`}
             </span>
           </div>
         </div>
@@ -89,6 +90,11 @@ export const EvalsView: React.FC<EvalsViewProps> = ({ project, cases = [] }) => 
 
         {/* Cases List */}
         <div className="space-y-2">
+          {filteredCases.length === 0 && (
+            <div className="rounded-lg border border-dashed border-white/[0.1] bg-[#090A0B] p-5 text-xs text-[#7D858C]">
+              {hasCaseData ? 'No evaluation cases match the current filters.' : 'No persisted evaluation cases were returned for this run.'}
+            </div>
+          )}
           {filteredCases.map((evalCase) => {
             const isSelected = selectedCase?.id === evalCase.id;
             const scoreDelta = evalCase.optimizedScore - evalCase.baselineScore;

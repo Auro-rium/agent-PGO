@@ -30,7 +30,9 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
   const evalCasesLabel = project.evalCasesCount > 0
     ? `${project.evalCasesCount.toLocaleString()} eval cases`
     : 'no eval cases recorded';
-  const firstSubstitution = selectedNode?.candidates.find((candidate) => candidate.status !== 'BASELINE');
+  const hasProfile = project.totalExecutions > 0;
+  const hasVerifiedOptimization = project.optimizedCost > 0 && project.optimizedQuality > 0;
+  const viableSubstitution = selectedNode?.candidates.find((candidate) => candidate.status === 'RECOMMENDED' || candidate.status === 'VIABLE');
 
   // If no node is selected, show the Agent Global Profiler
   if (!selectedNode) {
@@ -58,26 +60,26 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
             <div className="flex items-center justify-between">
               <span className="text-[10px] text-[#5C6268] uppercase">Compiler Optimization Scope</span>
               <span className="px-2 py-0.5 rounded bg-[#050505] border border-white/[0.1] text-xs font-bold text-[#F2F3F4]">
-                -{project.savingsPct}% Cost
+                {hasVerifiedOptimization ? `${project.savingsPct.toFixed(1)}% Cost Change` : 'No verified savings'}
               </span>
             </div>
 
             <div className="grid grid-cols-2 gap-3 pt-2 border-t border-white/[0.05]">
               <div>
                 <span className="text-[9.5px] text-[#5C6268] uppercase block">Baseline Cost</span>
-                <span className="text-sm font-semibold text-[#A0A5AA]">${project.baselineCost.toFixed(3)}</span>
+                <span className="text-sm font-semibold text-[#A0A5AA]">{hasProfile && project.baselineCost > 0 ? `$${project.baselineCost.toFixed(3)}` : '—'}</span>
                 <span className="text-[9px] text-[#5C6268] block">/ execution</span>
               </div>
               <div>
                 <span className="text-[9.5px] text-[#5C6268] uppercase block">Compiled Cost</span>
-                <span className="text-sm font-bold text-[#F2F3F4]">${project.optimizedCost.toFixed(3)}</span>
+                <span className="text-sm font-bold text-[#F2F3F4]">{hasVerifiedOptimization ? `$${project.optimizedCost.toFixed(3)}` : '—'}</span>
                 <span className="text-[9px] text-[#5C6268] block">/ execution</span>
               </div>
             </div>
 
             <div className="pt-2 border-t border-white/[0.05] flex items-center justify-between text-xs">
               <span className="text-[#5C6268]">Monthly Run Rate Delta:</span>
-              <span className="text-[#F2F3F4] font-bold">~${project.monthlySavingsEstimate.toLocaleString()}/mo</span>
+              <span className="text-[#F2F3F4] font-bold">{hasVerifiedOptimization && project.monthlySavingsEstimate > 0 ? `~$${project.monthlySavingsEstimate.toLocaleString()}/mo` : 'No estimate'}</span>
             </div>
           </div>
 
@@ -364,8 +366,8 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
             <div className="text-[10.5px] text-[#A0A5AA] leading-relaxed">
               {selectedNode.qualitySensitivity === 'HIGH'
                 ? `High reasoning sensitivity node. Downscaling this baseline model may regress quality; ${evalCasesLabel} are available for verification.`
-                : firstSubstitution
-                  ? `Validated against ${evalCasesLabel} with a measured substitution delta of ${Math.abs(firstSubstitution.costDeltaPct).toFixed(1)}% lower execution cost.`
+                : viableSubstitution
+                  ? `A ${viableSubstitution.status.toLowerCase()} substitution is recorded for ${evalCasesLabel}; measured cost change is ${viableSubstitution.costDeltaPct >= 0 ? '+' : ''}${viableSubstitution.costDeltaPct.toFixed(1)}%.`
                   : `No substitution evidence is available for this node yet; ${evalCasesLabel}.`}
             </div>
           </div>

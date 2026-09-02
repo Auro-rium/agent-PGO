@@ -292,7 +292,11 @@ export default function App({ session, onLogout, onOpenProfile }: AppProps) {
         setOptimizationStatus(status); setIsOptimizing(false); setActiveTestingNodeId(null); setTestingStatus(null);
         void api.candidates(result.runId).then(setCandidates).catch(() => undefined); void api.project(project.id).then((updated) => { setProject(updated); setActiveRunId(result.runId); }).catch(() => undefined);
       });
-    } catch (cause) { setIsOptimizing(false); setOptimizationStatus('FAILED'); setError(cause instanceof ApiError ? cause.message : 'Unable to start optimization.'); }
+    } catch (cause) {
+      setIsOptimizing(false); setOptimizationStatus('FAILED');
+      if (cause instanceof ApiError && cause.code === 'ENTITLEMENT_LIMIT_REACHED') setError('This workspace reached its plan limit. Upgrade your plan to continue optimizing.');
+      else setError(cause instanceof ApiError ? cause.message : 'Unable to start optimization.');
+    }
   };
 
   const selectCandidate = async (candidate: OptimizationCandidate) => {

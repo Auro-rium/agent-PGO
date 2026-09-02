@@ -41,6 +41,8 @@ export const ExecutionGraph: React.FC<ExecutionGraphProps> = ({
   layoutRevision = 0,
   onLayoutChange
 }) => {
+  const formatCost = (value: number, observed: boolean) => observed && value > 0 ? `$${value.toFixed(3)}` : '—';
+  const formatSeconds = (value: number, observed: boolean) => observed && value > 0 ? `${value.toFixed(1)}s` : '—';
   const containerRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 30, y: 25 });
@@ -419,13 +421,13 @@ export const ExecutionGraph: React.FC<ExecutionGraphProps> = ({
                   <div>
                     <div className="text-[9px] font-mono uppercase text-[#5C6268]">Cost/Run</div>
                     <div className="font-mono text-xs font-semibold text-[#F2F3F4]">
-                      ${node.avgCost.toFixed(3)}
+                      {formatCost(node.avgCost, node.calls > 0)}
                     </div>
                   </div>
                   <div>
                     <div className="text-[9px] font-mono uppercase text-[#5C6268]">Latency</div>
                     <div className="font-mono text-xs text-[#D7DADD]">
-                      {node.latencySec.toFixed(1)}s
+                      {formatSeconds(node.latencySec, node.calls > 0)}
                     </div>
                   </div>
                 </div>
@@ -434,7 +436,7 @@ export const ExecutionGraph: React.FC<ExecutionGraphProps> = ({
                 <div className="pt-0.5">
                   <div className="flex items-center justify-between text-[9.5px] font-mono mb-1">
                     <span className="text-[#5C6268]">
-                      {(node.inputTokens / 1000).toFixed(1)}k tok
+                      {node.calls > 0 ? `${(node.inputTokens / 1000).toFixed(1)}k tok` : '—'}
                     </span>
                     <span className="text-[#D7DADD]">
                       {node.costSharePct.toFixed(1)}% cost
@@ -522,17 +524,17 @@ export const ExecutionGraph: React.FC<ExecutionGraphProps> = ({
         <div className="flex items-center gap-5 font-mono text-xs">
           <div>
             <span className="text-[9px] text-[#5C6268] block uppercase">Cost / Req</span>
-            <span className="font-semibold text-[#F2F3F4]">${project.baselineCost.toFixed(3)}</span>
+            <span className="font-semibold text-[#F2F3F4]">{formatCost(project.baselineCost, project.totalExecutions > 0)}</span>
           </div>
           <div className="w-[1px] h-5 bg-white/[0.06]" />
           <div>
             <span className="text-[9px] text-[#5C6268] block uppercase">Latency P95</span>
-            <span className="text-[#D7DADD]">{project.baselineLatencyP95.toFixed(1)}s</span>
+            <span className="text-[#D7DADD]">{formatSeconds(project.baselineLatencyP95, project.totalExecutions > 0)}</span>
           </div>
           <div className="w-[1px] h-5 bg-white/[0.06]" />
           <div>
             <span className="text-[9px] text-[#5C6268] block uppercase">Quality</span>
-            <span className="text-[#D7DADD]">{project.baselineQuality.toFixed(1)}%</span>
+            <span className="text-[#D7DADD]">{project.totalExecutions > 0 && project.baselineQuality > 0 ? `${project.baselineQuality.toFixed(1)}%` : '—'}</span>
           </div>
           <div className="w-[1px] h-5 bg-white/[0.06]" />
           <div>

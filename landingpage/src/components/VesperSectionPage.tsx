@@ -8,6 +8,10 @@ export type VesperRoute =
 interface Props {
   route: VesperRoute;
   onLaunchStudio: () => void;
+  session?: { email: string };
+  onStartCheckout?: (referralCode?: string) => void;
+  checkoutState?: "idle" | "starting" | "error";
+  checkoutError?: string;
 }
 const links: Array<[VesperRoute, string]> = [
   ["benefits", "Benefits"],
@@ -38,7 +42,7 @@ const benefits = [
   [
     "04",
     "Optimize safely",
-    "twinerun works offline first. It recommends a configuration and leaves deployment under your control.",
+    "TwineRun works offline first. It recommends a configuration and leaves deployment under your control.",
     "NO AUTO-DEPLOY",
   ],
 ] as const;
@@ -46,7 +50,7 @@ const steps = [
   [
     "01",
     "Profile",
-    "Connect your agent or ingest OpenTelemetry traces. twinerun measures model usage, tokens, latency, cost, and execution structure.",
+    "Connect your agent or ingest OpenTelemetry traces. TwineRun measures model usage, tokens, latency, cost, and execution structure.",
     ["Planner      $0.061", "Researcher   $0.119", "Reasoner     $0.143"],
   ],
   [
@@ -58,7 +62,7 @@ const steps = [
   [
     "03",
     "Search",
-    "twinerun tests alternative model assignments and keeps configurations that stay inside your quality tolerance.",
+    "TwineRun tests alternative model assignments and keeps configurations that stay inside your quality tolerance.",
     [
       "Sol → Luna       PASS",
       "Sol → Flash      PASS",
@@ -74,15 +78,15 @@ const steps = [
 ] as const;
 const faqs = [
   [
-    "What exactly does twinerun optimize?",
-    "twinerun V1 optimizes the model assigned to each step of an AI agent. It identifies where cheaper models can replace expensive ones without exceeding your allowed quality regression.",
+    "What exactly does TwineRun optimize?",
+    "TwineRun V1 optimizes the model assigned to each step of an AI agent. It identifies where cheaper models can replace expensive ones without exceeding your allowed quality regression.",
   ],
   [
-    "Does twinerun change my production agent automatically?",
-    "No. Optimization happens offline. twinerun produces a tested recommendation that you review and export before making any production change.",
+    "Does TwineRun change my production agent automatically?",
+    "No. Optimization happens offline. TwineRun produces a tested recommendation that you review and export before making any production change.",
   ],
   [
-    "How does twinerun know whether a cheaper model is good enough?",
+    "How does TwineRun know whether a cheaper model is good enough?",
     "It runs candidate configurations against your evaluation dataset and compares them with your current baseline. Candidates that fall outside your quality tolerance are rejected.",
   ],
   [
@@ -91,11 +95,11 @@ const faqs = [
   ],
   [
     "Which agents and models can I use?",
-    "twinerun is designed to be framework-agnostic through normalized traces and OpenTelemetry.",
+    "TwineRun is designed to be framework-agnostic through normalized traces and OpenTelemetry.",
   ],
   [
-    "Is twinerun another model router?",
-    "No. A router decides which model to use at runtime. twinerun profiles and experimentally optimizes an existing agent before deployment.",
+    "Is TwineRun another model router?",
+    "No. A router decides which model to use at runtime. TwineRun profiles and experimentally optimizes an existing agent before deployment.",
   ],
 ] as const;
 
@@ -141,7 +145,7 @@ function Header({ onLaunchStudio }: { onLaunchStudio: () => void }) {
         </nav>
         <div className="vesper-header-actions">
           <a href="/signin?returnTo=%2Fstudio" className="vesper-btn vesper-btn--solid vesper-header-cta">
-            Launch twinerun
+            Launch TwineRun
           </a>
           <button
             className="vesper-burger"
@@ -170,7 +174,7 @@ function Header({ onLaunchStudio }: { onLaunchStudio: () => void }) {
           </a>
         ))}
         <a href="/signin?returnTo=%2Fstudio" className="vesper-btn vesper-btn--solid vesper-mobile-cta">
-          Launch twinerun <ArrowRight size={15} />
+          Launch TwineRun <ArrowRight size={15} />
         </a>
       </nav>
     </>
@@ -180,9 +184,16 @@ function Header({ onLaunchStudio }: { onLaunchStudio: () => void }) {
 export const VesperSectionPage: React.FC<Props> = ({
   route,
   onLaunchStudio,
+  session,
+  onStartCheckout,
+  checkoutState = "idle",
+  checkoutError,
 }) => {
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [selectedBenchmarkId, setSelectedBenchmarkId] = useState("42");
+  const referralCode = new URLSearchParams(window.location.search).get("ref")?.trim() || "";
+  const signupPath = referralCode ? `/signup?ref=${encodeURIComponent(referralCode)}` : "/signup";
+  const checkoutReturn = `/pricing?checkout=pro${referralCode ? `&ref=${encodeURIComponent(referralCode)}` : ""}`;
   const selectedBenchmark =
     benchmarkCandidates.find(
       (candidate) => candidate.id === selectedBenchmarkId,
@@ -196,7 +207,7 @@ export const VesperSectionPage: React.FC<Props> = ({
     benefits: [
       "WHY TWINERUN",
       "Spend intelligence where it actually matters.",
-      "Most agents use expensive models far more often than necessary. twinerun finds where cheaper execution is safe and where frontier intelligence must stay.",
+      "Most agents use expensive models far more often than necessary. TwineRun finds where cheaper execution is safe and where frontier intelligence must stay.",
     ],
     "how-it-works": [
       "THE WORKFLOW",
@@ -206,7 +217,7 @@ export const VesperSectionPage: React.FC<Props> = ({
     faqs: [
       "QUESTIONS",
       "Clear answers before you optimize.",
-      "twinerun is built around measured tradeoffs, explicit tolerances, and human approval before production changes.",
+      "TwineRun is built around measured tradeoffs, explicit tolerances, and human approval before production changes.",
     ],
     pricing: [
       "LAUNCH PRICING",
@@ -295,9 +306,11 @@ export const VesperSectionPage: React.FC<Props> = ({
           <p className="vesper-eyebrow">{page[0]}</p>
           <h1>{page[1]}</h1>
           <p>{page[2]}</p>
-          <a href="/signin?returnTo=%2Fstudio" className="vesper-btn vesper-btn--solid">
+          <a href={session ? "/studio" : "/signin?returnTo=%2Fstudio"} className="vesper-btn vesper-btn--solid">
             Optimize an Agent <ArrowRight size={15} />
           </a>
+          {route === "pricing" && checkoutState === "starting" && <p className="vesper-checkout-note" role="status">Preparing secure checkout…</p>}
+          {route === "pricing" && checkoutState === "error" && checkoutError && <p className="vesper-checkout-error" role="alert">{checkoutError}</p>}
         </section>
         {route === "benefits" && (
           <section className="vesper-route-content">
@@ -312,7 +325,7 @@ export const VesperSectionPage: React.FC<Props> = ({
               ))}
             </div>
             <div className="vesper-route-callout">
-              <strong>One mental model:</strong> twinerun finds where your agent
+              <strong>One mental model:</strong> TwineRun finds where your agent
               is overspending on intelligence, tests cheaper alternatives, and
               proves which configuration still works.
             </div>
@@ -333,7 +346,7 @@ export const VesperSectionPage: React.FC<Props> = ({
               ))}
             </div>
             <p className="vesper-closing-line">
-              twinerun does not guess. It benchmarks.
+              TwineRun does not guess. It benchmarks.
             </p>
           </section>
         )}
@@ -359,10 +372,10 @@ export const VesperSectionPage: React.FC<Props> = ({
                   <div>P95 <b>{(selectedBenchmark.id === "42" ? selectedBenchmark.latencySec : selectedBenchmark.p95LatencySec).toFixed(1)}s</b></div>
                   <div className="vesper-savings"><b>{selectedBenchmark.savingsPct.toFixed(1)}% lower cost</b></div>
                 </div>
-                <a href="/signin?returnTo=%2Fstudio" className="vesper-btn vesper-btn--solid">Optimize an Agent <ArrowRight size={15} /></a>
+                <a href={session ? "/studio" : "/signin?returnTo=%2Fstudio"} className="vesper-btn vesper-btn--solid">Optimize an Agent <ArrowRight size={15} /></a>
               </aside>
             </div>
-            <p className="vesper-demo-note">Set your quality tolerance. twinerun searches the model space and shows you the configurations that survive it.</p>
+            <p className="vesper-demo-note">Set your quality tolerance. TwineRun searches the model space and shows you the configurations that survive it.</p>
           </section>
         )}
         {route === "faqs" && (
@@ -453,16 +466,17 @@ export const VesperSectionPage: React.FC<Props> = ({
                       </li>
                     ))}
                   </ul>
-                  <a href="/signin?returnTo=%2Fstudio"
-                    className={`vesper-btn ${index === 1 ? "vesper-btn--solid" : "vesper-btn--ghost"}`}
-                  >
-                    {index === 0
-                      ? "Start Free"
-                      : index === 1
-                        ? "Start Optimizing"
-                        : "Start with Team"}{" "}
-                    <ArrowRight size={15} />
-                  </a>
+                  {index === 2 ? (
+                    <button type="button" className="vesper-btn vesper-btn--ghost vesper-btn--disabled" disabled>
+                      Coming later
+                    </button>
+                  ) : index === 0 ? (
+                    <a href={signupPath} className="vesper-btn vesper-btn--ghost">Start Free <ArrowRight size={15} /></a>
+                  ) : session ? (
+                    <button type="button" className="vesper-btn vesper-btn--solid" onClick={() => onStartCheckout?.(referralCode || undefined)}>Start Optimizing <ArrowRight size={15} /></button>
+                  ) : (
+                    <a href={`/signin?returnTo=${encodeURIComponent(checkoutReturn)}`} className="vesper-btn vesper-btn--solid">Start Optimizing <ArrowRight size={15} /></a>
+                  )}
                 </article>
               ))}
             </div>
@@ -473,17 +487,13 @@ export const VesperSectionPage: React.FC<Props> = ({
                 <p>We profile and optimize it with you.</p>
               </div>
               <strong>From $2,500</strong>
-              <a href="/signin?returnTo=%2Fstudio"
-                className="vesper-btn vesper-btn--ghost"
-              >
-                Talk to Us <ArrowRight size={15} />
-              </a>
+              <a href="mailto:hello@twinerun.ai?subject=Agent%20Optimization%20Sprint" className="vesper-btn vesper-btn--ghost">Talk to Us <ArrowRight size={15} /></a>
             </div>
           </section>
         )}
       </main>
       <footer className="vesper-long-footer">
-        <span>twinerun.ai</span>
+        <span>TwineRun.ai</span>
         <span>Profile-guided optimization for AI agents.</span>
         <span>© 2026</span>
       </footer>

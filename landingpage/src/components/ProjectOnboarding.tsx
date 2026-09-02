@@ -38,6 +38,8 @@ export const ProjectOnboarding: React.FC<ProjectOnboardingProps> = ({
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [slugEdited, setSlugEdited] = useState(false);
+  const [slugTouched, setSlugTouched] = useState(false);
+  const [submitAttempted, setSubmitAttempted] = useState(false);
   const [key, setKey] = useState<{ secret: string; name: string } | null>(null);
   const [keyBusy, setKeyBusy] = useState(false);
   const [activeStep, setActiveStep] = useState<"version" | "traces" | "evals" | "baseline" | null>(null);
@@ -61,9 +63,12 @@ export const ProjectOnboarding: React.FC<ProjectOnboardingProps> = ({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    setSubmitAttempted(true);
     if (!onCreateProject || !name.trim() || slugError) return;
     await onCreateProject(name.trim(), slug);
   };
+
+  const showSlugError = slugTouched || submitAttempted;
 
   const parseVersion = () => {
     const lines = nodesText.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
@@ -142,8 +147,8 @@ export const ProjectOnboarding: React.FC<ProjectOnboardingProps> = ({
             <div className="rounded-lg border border-white/[0.08] bg-white/[0.03] p-3"><Plus className="h-5 w-5 text-[#D7DADD]" /></div>
           </div>
           <label className="block text-[10px] font-mono uppercase tracking-wider text-[#7D858C]">Project name<input value={name} onChange={(event) => { const next = event.target.value; setName(next); if (!slugEdited) setSlug(slugify(next)); }} placeholder="Research Agent" className="mt-2 w-full rounded border border-white/[0.1] bg-[#050505] px-3 py-3 text-sm text-[#F2F3F4] outline-none focus:border-white/30" /></label>
-          <label className="mt-5 block text-[10px] font-mono uppercase tracking-wider text-[#7D858C]">Slug<input value={slug} onChange={(event) => { setSlugEdited(true); setSlug(slugify(event.target.value)); }} placeholder="research-agent" className={`mt-2 w-full rounded border bg-[#050505] px-3 py-3 font-mono text-sm text-[#F2F3F4] outline-none ${slugError ? "border-[#8A4E4E]" : "border-white/[0.1] focus:border-white/30"}`} /></label>
-          {(slugError) && <p className="mt-2 text-xs text-[#D58C8C]">{slugError}</p>}
+          <label className="mt-5 block text-[10px] font-mono uppercase tracking-wider text-[#7D858C]">Slug<input value={slug} onChange={(event) => { setSlugEdited(true); setSlugTouched(true); setSlug(slugify(event.target.value)); }} placeholder="research-agent" className={`mt-2 w-full rounded border bg-[#050505] px-3 py-3 font-mono text-sm text-[#F2F3F4] outline-none ${showSlugError && slugError ? "border-[#8A4E4E]" : "border-white/[0.1] focus:border-white/30"}`} /></label>
+          {showSlugError && slugError && <p className="mt-2 text-xs text-[#D58C8C]">{slugError}</p>}
           {error && <p className="mt-4 flex items-center gap-2 rounded border border-[#8A4E4E]/50 bg-[#2A1515] px-3 py-2 text-xs text-[#E2A4A4]"><CircleAlert className="h-3.5 w-3.5" />{error}</p>}
           <button disabled={busy || !name.trim() || Boolean(slugError)} className="silver-btn-gradient mt-7 flex h-11 w-full items-center justify-center gap-2 rounded text-sm font-medium text-[#050505] disabled:cursor-not-allowed disabled:opacity-40">{busy ? "Creating project…" : "Create project"}<ArrowRight className="h-4 w-4" /></button>
         </form>

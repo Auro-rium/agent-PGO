@@ -15,6 +15,30 @@ export interface ProjectSetupState {
   evalCaseCount?: number;
 }
 
+export interface EntitlementState {
+  plan: string;
+  planStatus: string;
+  limits?: Record<string, JsonValue>;
+  usage?: Record<string, JsonValue>;
+  referralCode?: string | null;
+  pendingReferrals?: number;
+  qualifiedReferrals?: number;
+  earnedRewards?: number;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ReferralSummary {
+  referralCode?: string | null;
+  referralLink?: string | null;
+  pending?: number;
+  qualified?: number;
+  rewarded?: number;
+  reversed?: number;
+  freeProMonths?: number;
+  referrals?: Array<Record<string, JsonValue>>;
+  [key: string]: JsonValue | undefined;
+}
+
 export interface CandidateSubstitution {
   model: string;
   costDelta: number; // e.g. -0.091

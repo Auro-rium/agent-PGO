@@ -27,7 +27,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ project, onUpdatePro
           <div>
             <div className="flex items-center gap-2 text-[#D7DADD]"><SettingsIcon className="h-4 w-4" /><span className="text-[10px] uppercase tracking-[0.18em] text-[#A0A5AA]">Studio settings</span></div>
             <h1 className="mt-3 font-sans text-2xl font-medium tracking-[-0.03em] text-[#F2F3F4]">Compiler flags & bounds</h1>
-            <p className="mt-2 max-w-xl text-xs leading-relaxed text-[#6F767D]">Define the safety boundary AgentPGO uses before it recommends a cheaper execution plan for <span className="text-[#D7DADD]">{project.name}</span>.</p>
+            <p className="mt-2 max-w-xl text-xs leading-relaxed text-[#6F767D]">Define the safety boundary TwineRun uses before it recommends a cheaper execution plan for <span className="text-[#D7DADD]">{project.name}</span>.</p>
           </div>
           <div className="rounded border border-white/[0.08] bg-[#0B0D0F] px-3 py-2 text-right"><div className="text-[9px] uppercase tracking-wider text-[#5C6268]">Active workspace</div><div className="mt-1 text-[#F2F3F4]">{project.name}</div><div className="mt-0.5 text-[10px] text-[#6F767D]">{project.environment} · {project.version}</div></div>
         </div>

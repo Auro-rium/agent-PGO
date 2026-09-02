@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import App from './App';
 import { AuthPage, ProfilePage } from './components/AuthPages';
 import { AUTH_SESSION_EVENT, DemoSession, getDemoSession, clearDemoSession } from './auth/demoAuth';
@@ -26,6 +26,9 @@ const NotFoundPage: React.FC<{ path: string; onHome: () => void }> = ({ path, on
 export default function LandingGateV5() {
   const route = useBrowserRoute();
   const [session, setSession] = useState<DemoSession | null>(() => getDemoSession());
+  const [checkoutState, setCheckoutState] = useState<"idle" | "starting" | "error">("idle");
+  const [checkoutError, setCheckoutError] = useState("");
+  const checkoutAttempt = useRef("");
 
   useEffect(() => {
     const onAuthChange = () => setSession(getDemoSession());
@@ -41,7 +44,35 @@ export default function LandingGateV5() {
     }
   }, [route, session]);
 
+  const startCheckout = useCallback(async (referralCode?: string) => {
+    if (!session) {
+      const returnTo = `/pricing?checkout=pro${referralCode ? `&ref=${encodeURIComponent(referralCode)}` : ""}`;
+      navigate(`/signin?returnTo=${encodeURIComponent(returnTo)}`);
+      return;
+    }
+    setCheckoutState("starting"); setCheckoutError("");
+    const storageKey = "twinerun.checkout.idempotency";
+    const idempotencyKey = window.sessionStorage.getItem(storageKey) || (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+    window.sessionStorage.setItem(storageKey, idempotencyKey);
+    try {
+      const result = await api.checkout("pro", referralCode, idempotencyKey);
+      if (!result.checkoutUrl) throw new Error("Checkout URL was not returned by the billing service.");
+      window.sessionStorage.setItem("twinerun.checkout.pending", JSON.stringify({ checkoutSessionId: result.checkoutSessionId, idempotencyKey, startedAt: new Date().toISOString() }));
+      window.location.assign(result.checkoutUrl);
+    } catch (cause) {
+      setCheckoutState("error");
+      setCheckoutError(cause instanceof Error ? cause.message : "Checkout could not be started.");
+    }
+  }, [session]);
   const launchStudio = () => navigate(session ? '/studio' : '/signin?returnTo=%2Fstudio');
+  useEffect(() => {
+    if (route.kind !== "section" || route.section !== "pricing" || route.checkout !== "pro" || !session) return;
+    const attemptKey = `${session.email}:${routePath(route)}`;
+    if (checkoutAttempt.current === attemptKey) return;
+    checkoutAttempt.current = attemptKey;
+    void startCheckout(route.referralCode);
+  }, [route, session, startCheckout]);
+
   const handleAuthenticated = (nextSession: DemoSession) => {
     setSession(nextSession);
     navigate(route.kind === 'auth' ? safeReturnPath(route.returnTo) : '/studio', true);
@@ -60,5 +91,5 @@ export default function LandingGateV5() {
   if (route.kind === 'studio') return session ? <App session={session} onLogout={logout} onOpenProfile={() => navigate('/profile')} /> : null;
   if (route.kind === 'not-found') return <NotFoundPage path={route.path} onHome={() => navigate('/')} />;
   if (route.kind === 'home') return <VesperHomeFinal onLaunchStudio={launchStudio} />;
-  return <VesperSectionPage route={route.section} onLaunchStudio={launchStudio} />;
+  return <VesperSectionPage route={route.section} onLaunchStudio={launchStudio} session={session || undefined} onStartCheckout={(referralCode) => void startCheckout(referralCode)} checkoutState={checkoutState} checkoutError={checkoutError} />;
 }

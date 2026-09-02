@@ -4,7 +4,7 @@ import { VesperRoute } from "../components/VesperSectionPage";
 
 export type BrowserRoute =
   | { kind: "home" }
-  | { kind: "section"; section: VesperRoute }
+  | { kind: "section"; section: VesperRoute; checkout?: string; referralCode?: string }
   | { kind: "auth"; mode: "signin" | "signup"; returnTo?: string }
   | { kind: "profile" }
   | { kind: "system" }
@@ -43,7 +43,10 @@ export interface ParsedLocation { route: BrowserRoute; legacyPath?: string; }
 export const parsePath = (pathname: string, search = ""): BrowserRoute => {
   const path = cleanPath(pathname);
   if (path === "/") return { kind: "home" };
-  if (sections.has(path.slice(1) as VesperRoute) && path.split("/").length === 2) return { kind: "section", section: path.slice(1) as VesperRoute };
+  if (sections.has(path.slice(1) as VesperRoute) && path.split("/").length === 2) {
+    const params = new URLSearchParams(search);
+    return { kind: "section", section: path.slice(1) as VesperRoute, checkout: params.get("checkout") || undefined, referralCode: params.get("ref") || undefined };
+  }
   if (path === "/signin" || path === "/signup") {
     const params = new URLSearchParams(search);
     const returnTo = params.get("returnTo") || undefined;
@@ -94,7 +97,13 @@ export const useBrowserRoute = (): BrowserRoute => {
 export const routePath = (route: BrowserRoute): string => {
   switch (route.kind) {
     case "home": return "/";
-    case "section": return `/${route.section}`;
+    case "section": {
+      const params = new URLSearchParams();
+      if (route.checkout) params.set("checkout", route.checkout);
+      if (route.referralCode) params.set("ref", route.referralCode);
+      const query = params.toString();
+      return `/${route.section}${query ? `?${query}` : ""}`;
+    }
     case "auth": return `/${route.mode}${route.returnTo ? `?returnTo=${encodeURIComponent(route.returnTo)}` : ""}`;
     case "profile": return "/profile";
     case "system": return "/system";
