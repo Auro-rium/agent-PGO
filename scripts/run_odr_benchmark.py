@@ -106,9 +106,15 @@ def main() -> int:
     if args.tasks < 1 or args.search_tasks < args.tasks: parser.error("tasks must be positive and search-tasks >= tasks")
     if args.timeout_seconds is not None and not 0 < args.timeout_seconds <= 300:
         parser.error("timeout-seconds must be between 0 and 300")
-    tasks = load_odr_tasks(args.artifacts / "deep_research_bench_gpt-4.1.jsonl", limit=args.search_tasks)
     pool = tuple(args.model_pool)
     completed_roles: list[str] = []
+    try:
+        tasks = load_odr_tasks(args.artifacts / "deep_research_bench_gpt-4.1.jsonl", limit=args.search_tasks)
+    except Exception as exc:
+        payload = {"status": "failed", "mode": args.mode, "evidence": "aggregate-only bounded run; no prompts or outputs persisted", "model_pool": list(pool), "completed_roles": completed_roles, "error_category": type(exc).__name__, "error": str(exc)[:500]}
+        _write_artifact(args.output, payload)
+        print(json.dumps({"status": "failed", "mode": args.mode, "output": str(args.output), "tasks": args.tasks}, indent=2))
+        return 2
     _write_artifact(args.output, {
         "status": "running",
         "mode": args.mode,
