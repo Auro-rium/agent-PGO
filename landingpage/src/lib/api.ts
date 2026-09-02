@@ -114,6 +114,12 @@ export const api = {
   async onboarding(projectId: string): Promise<ProjectSetupState> { return adaptOnboarding(await request(`/projects/${encodeURIComponent(projectId)}/onboarding`)); },
   async createVersion(projectId: string, input: Record<string, unknown>): Promise<Record<string, unknown>> { return request(`/projects/${encodeURIComponent(projectId)}/versions`, json(input)); },
   async createProjectKey(projectId: string, name = "twinerun-local"): Promise<{ secret: string; name: string; id?: string }> { return request(`/projects/${encodeURIComponent(projectId)}/api-keys`, json({ name })); },
+  async importEval(projectId: string, name: string, cases: Record<string, unknown>[], graders: Record<string, unknown>[]): Promise<Record<string, unknown>> { return request("/evals/import", json({ project_id: projectId, name, cases, graders })); },
+  async runBaseline(projectId: string, datasetId?: string): Promise<{ runId: string; status: string }> {
+    const payload = await request<Record<string, unknown>>("/baselines/run", json({ project_id: projectId, dataset_id: datasetId, config: {}, max_experiment_cost_usd: 25 }));
+    return { runId: String(payload.run_id || payload.runId || payload.id), status: String(payload.status || "queued").toUpperCase() };
+  },
+  async baseline(runId: string): Promise<Record<string, unknown>> { return request(`/baselines/${encodeURIComponent(runId)}`); },
   async project(projectId: string): Promise<AgentProject> { return adaptProject(await request(`/projects/${encodeURIComponent(projectId)}`)); },
   async startOptimization(projectId: string, input: Record<string, unknown>): Promise<{ runId: string; status: string }> {
     const payload = await request<Record<string, unknown>>(`/projects/${encodeURIComponent(projectId)}/optimization-runs`, json(input));
