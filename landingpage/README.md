@@ -32,6 +32,11 @@ value is embedded in the static browser bundle, so it must be an API origin or
 path rather than a credential (for example, `https://api.example.com/api/v1`
 or `/api/v1`).
 
+The hosted demo build also sets `VITE_DEMO_AUTH_ENABLED=true`, which allows the
+frontend to request a short-lived demo session from `/auth/demo`. It does not
+embed `VITE_DEMO_ACCESS_TOKEN`; do not add that token (or any other credential)
+to the workflow.
+
 ## AWS Lambda delivery
 
 The static Vite artifact can be packaged into a Lambda Function URL with:

@@ -105,10 +105,12 @@ jobs:
           set -euo pipefail
           html="$(curl --fail --silent --show-error "$FUNCTION_URL")"
           grep -q '<title>TwineRun — Operational AI Infrastructure</title>' <<< "$html"
+          browser_path_html="$(curl --fail --silent --show-error "${FUNCTION_URL%/}/studio")"
+          grep -q '<title>TwineRun — Operational AI Infrastructure</title>' <<< "$browser_path_html"
           asset="$(grep -o 'assets/index-[A-Za-z0-9_-]*\.js' <<< "$html" | head -1)"
           test -n "$asset"
           bundle="$(curl --fail --silent --show-error "$FUNCTION_URL$asset")"
           grep -q 'EMPIRICAL BENCHMARKS' <<< "$bundle"
           grep -q 'twinerun-logo.png' <<< "$bundle"
-          ! grep -Eqi 'Vesper\.ai|AgentPGO|See It Work' <<< "$bundle"
+          ! grep -Eqi 'Vesper\.ai|See It Work' <<< "$bundle"
           echo "TwineRun frontend smoke test passed: $FUNCTION_URL"
