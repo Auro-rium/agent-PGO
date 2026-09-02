@@ -3,61 +3,57 @@ import App from './App';
 import { AuthPage, ProfilePage } from './components/AuthPages';
 import { AUTH_SESSION_EVENT, DemoSession, getDemoSession, clearDemoSession } from './auth/demoAuth';
 import { VesperHomeFinal } from './components/VesperHomeFinal';
-import { VesperRoute, VesperSectionPage } from './components/VesperSectionPage';
+import { VesperSectionPage } from './components/VesperSectionPage';
+import { navigate, routePath, safeReturnPath, useBrowserRoute } from './lib/router';
 import './vesper.css';
 import './vesper-fix.css';
 import './vesper-sections.css';
 import './vesper-routes.css';
 
-const routeFromHash = (): VesperRoute | 'home' | 'studio' | 'signin' | 'signup' | 'profile' => {
-  const value = window.location.hash.replace(/^#/, '').replace(/\/$/, '');
-  if (value === 'studio' || value.startsWith('studio/')) return 'studio';
-  if (value === 'benefits' || value === 'how-it-works' || value === 'benchmarks' || value === 'faqs' || value === 'pricing') return value;
-  if (value === 'signin' || value === 'signup' || value === 'profile') return value;
-  return 'home';
-};
+const NotFoundPage: React.FC<{ path: string; onHome: () => void }> = ({ path, onHome }) => (
+  <main className="vesper-page flex min-h-screen items-center justify-center bg-[#050505] px-6 text-[#F2F3F4]">
+    <section className="w-full max-w-lg rounded-xl border border-white/[0.1] bg-[#0A0C0E] p-8 text-center font-mono">
+      <p className="text-[10px] uppercase tracking-[0.2em] text-[#7D858C]">404 · route not found</p>
+      <h1 className="mt-4 text-2xl font-medium">This path does not exist.</h1>
+      <p className="mt-3 break-all text-xs text-[#8C949B]">{path}</p>
+      <button className="silver-btn-gradient mt-7 rounded px-4 py-2 text-xs font-bold text-[#050505]" onClick={onHome}>Return home</button>
+    </section>
+  </main>
+);
 
 export default function LandingGateV5() {
-  const [route, setRoute] = useState<VesperRoute | 'home' | 'studio' | 'signin' | 'signup' | 'profile'>(routeFromHash);
+  const route = useBrowserRoute();
   const [session, setSession] = useState<DemoSession | null>(() => getDemoSession());
 
-  const navigate = (hash: string, replace = false) => {
-    const nextHash = `#${hash}`;
-    if (replace) window.history.replaceState({}, '', nextHash);
-    else window.history.pushState({}, '', nextHash);
-    setRoute(routeFromHash());
-  };
-
   useEffect(() => {
-    const onHashChange = () => setRoute(routeFromHash());
     const onAuthChange = () => setSession(getDemoSession());
-    window.addEventListener('hashchange', onHashChange);
     window.addEventListener(AUTH_SESSION_EVENT, onAuthChange);
     return () => {
-      window.removeEventListener('hashchange', onHashChange);
       window.removeEventListener(AUTH_SESSION_EVENT, onAuthChange);
     };
   }, []);
 
   useEffect(() => {
-    if ((route === 'studio' || route === 'profile') && !session) navigate('signin', true);
+    if ((route.kind === 'studio' || route.kind === 'profile') && !session) {
+      navigate(`/signin?returnTo=${encodeURIComponent(routePath(route))}`, true);
+    }
   }, [route, session]);
 
-  const launchStudio = () => navigate(session ? 'studio' : 'signin');
+  const launchStudio = () => navigate(session ? '/studio' : '/signin?returnTo=%2Fstudio');
   const handleAuthenticated = (nextSession: DemoSession) => {
     setSession(nextSession);
-    navigate('studio');
+    navigate(route.kind === 'auth' ? safeReturnPath(route.returnTo) : '/studio', true);
   };
   const logout = () => {
     clearDemoSession();
     setSession(null);
-    navigate('signin', true);
+    navigate('/signin', true);
   };
 
-  if (route === 'signin' || route === 'signup') return <AuthPage mode={route} onAuthenticated={handleAuthenticated} />;
-  if (route === 'profile') return session ? <ProfilePage session={session} onLogout={logout} onOpenStudio={() => navigate('studio')} /> : <AuthPage mode="signin" onAuthenticated={handleAuthenticated} />;
-  if (route === 'studio') return session ? <App session={session} onLogout={logout} onOpenProfile={() => navigate('profile')} /> : <AuthPage mode="signin" onAuthenticated={handleAuthenticated} />;
-  if (route === 'home') return <VesperHomeFinal onLaunchStudio={launchStudio} />;
-  return <VesperSectionPage route={route} onLaunchStudio={launchStudio} />;
+  if (route.kind === 'auth') return <AuthPage mode={route.mode} onAuthenticated={handleAuthenticated} />;
+  if (route.kind === 'profile') return session ? <ProfilePage session={session} onLogout={logout} onOpenStudio={() => navigate('/studio')} /> : null;
+  if (route.kind === 'studio') return session ? <App session={session} onLogout={logout} onOpenProfile={() => navigate('/profile')} /> : null;
+  if (route.kind === 'not-found') return <NotFoundPage path={route.path} onHome={() => navigate('/')} />;
+  if (route.kind === 'home') return <VesperHomeFinal onLaunchStudio={launchStudio} />;
+  return <VesperSectionPage route={route.section} onLaunchStudio={launchStudio} />;
 }
-

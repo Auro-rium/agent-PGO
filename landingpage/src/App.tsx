@@ -18,12 +18,7 @@ import { DemoSession } from './auth/demoAuth';
 import { api, ApiError } from './lib/api';
 import { subscribeToOptimization, OptimizerStream } from './lib/sse';
 import { ProjectOnboarding } from './components/ProjectOnboarding';
-
-const studioViewFromHash = (): ViewMode => {
-  const value = window.location.hash.replace(/^#studio\/?/, '').replace(/\/$/, '');
-  if (value === 'frontier' || value === 'diff' || value === 'timeline' || value === 'evals' || value === 'settings') return value;
-  return 'graph';
-};
+import { navigate, studioPath, studioViewFromPath } from './lib/router';
 
 const ACTIVE_PROJECT_STORAGE_KEY = 'twinerun.active-project';
 const activeRunStorageKey = (projectId: string) => `twinerun.active-run:${projectId}`;
@@ -33,8 +28,9 @@ const numberSetting = (value: unknown, fallback: number): number => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
-const layoutFromApi = (value: Record<string, unknown>, projectId: string): ProjectLayout => {
-  const rawNodes = value.nodes && typeof value.nodes === 'object' ? value.nodes as Record<string, unknown> : {};
+const layoutFromApi = (value: unknown, projectId: string): ProjectLayout => {
+  const payload = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const rawNodes = payload.nodes && typeof payload.nodes === 'object' ? payload.nodes as Record<string, unknown> : {};
   const nodes: Record<string, NodePosition> = {};
   Object.entries(rawNodes).forEach(([nodeId, rawPosition]) => {
     if (!rawPosition || typeof rawPosition !== 'object') return;
@@ -45,10 +41,10 @@ const layoutFromApi = (value: Record<string, unknown>, projectId: string): Proje
   });
   return {
     projectId,
-    versionId: typeof value.versionId === 'string' ? value.versionId : null,
-    revision: Math.max(0, Math.floor(numberSetting(value.revision, 0))),
+    versionId: typeof payload.versionId === 'string' ? payload.versionId : null,
+    revision: Math.max(0, Math.floor(numberSetting(payload.revision, 0))),
     nodes,
-    updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : null,
+    updatedAt: typeof payload.updatedAt === 'string' ? payload.updatedAt : null,
   };
 };
 
@@ -56,7 +52,7 @@ interface AppProps { session?: DemoSession; onLogout?: () => void; onOpenProfile
 
 export default function App({ session, onLogout, onOpenProfile }: AppProps) {
   const activeSession: DemoSession = session || { name: 'TwineRun User', email: '', initials: 'TR', authenticatedAt: '' };
-  const [currentView, setCurrentView] = useState<ViewMode>(studioViewFromHash);
+  const [currentView, setCurrentView] = useState<ViewMode>(() => studioViewFromPath(window.location.pathname));
   const [projects, setProjects] = useState<AgentProject[]>([]);
   const [project, setProject] = useState<AgentProject | null>(null);
   const [activeRunId, setActiveRunId] = useState('');
@@ -177,10 +173,10 @@ export default function App({ session, onLogout, onOpenProfile }: AppProps) {
       void api.evalCases(runId).then(setEvalCases).catch(() => undefined);
     }
   }, [activeRunId, project?.id, project?.runId]);
-  useEffect(() => { const handle = () => setCurrentView(studioViewFromHash()); window.addEventListener('hashchange', handle); return () => window.removeEventListener('hashchange', handle); }, []);
+  useEffect(() => { const handle = () => setCurrentView(studioViewFromPath(window.location.pathname)); window.addEventListener('popstate', handle); window.addEventListener('hashchange', handle); return () => { window.removeEventListener('popstate', handle); window.removeEventListener('hashchange', handle); }; }, []);
   useEffect(() => () => streamRef.current?.close(), []);
 
-  const handleViewChange = (view: ViewMode) => { window.history.pushState({}, '', '#studio/' + view); setCurrentView(view); };
+  const handleViewChange = (view: ViewMode) => { navigate(studioPath(view)); setCurrentView(view); };
   const handleSelectProject = async (projectId: string) => {
     try {
       const next = await api.project(projectId);
