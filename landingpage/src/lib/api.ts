@@ -115,8 +115,17 @@ export const api = {
     return auth;
   },
   async me(): Promise<Record<string, unknown>> { return request<Record<string, unknown>>("/me"); },
-  async signIn(email: string, password: string): Promise<Record<string, unknown>> { return request("/auth/signin", json({ email, password })); },
-  async signUp(name: string, email: string, password: string): Promise<Record<string, unknown>> { return request("/auth/signup", json({ name, email, password })); },
+  async systemOverview(): Promise<Record<string, unknown>> { return request<Record<string, unknown>>("/system/overview"); },
+  async signIn(email: string, password: string): Promise<Record<string, unknown>> {
+    const auth = await request<Record<string, unknown>>("/auth/signin", json({ email, password }));
+    if (typeof auth.accessToken === "string") storeToken(auth.accessToken);
+    return auth;
+  },
+  async signUp(name: string, email: string, password: string): Promise<Record<string, unknown>> {
+    const auth = await request<Record<string, unknown>>("/auth/signup", json({ name, email, password }));
+    if (typeof auth.accessToken === "string") storeToken(auth.accessToken);
+    return auth;
+  },
   async logout(): Promise<void> { await request("/auth/logout", { method: "POST" }); },
   async projects(): Promise<AgentProject[]> {
     const payload = await request<unknown>("/projects");

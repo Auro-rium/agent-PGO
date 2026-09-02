@@ -5,6 +5,8 @@ import { AUTH_SESSION_EVENT, DemoSession, getDemoSession, clearDemoSession } fro
 import { VesperHomeFinal } from './components/VesperHomeFinal';
 import { VesperSectionPage } from './components/VesperSectionPage';
 import { navigate, routePath, safeReturnPath, useBrowserRoute } from './lib/router';
+import { SystemOverview } from './components/SystemOverview';
+import { api } from './lib/api';
 import './vesper.css';
 import './vesper-fix.css';
 import './vesper-sections.css';
@@ -34,7 +36,7 @@ export default function LandingGateV5() {
   }, []);
 
   useEffect(() => {
-    if ((route.kind === 'studio' || route.kind === 'profile') && !session) {
+    if ((route.kind === 'studio' || route.kind === 'profile' || route.kind === 'system') && !session) {
       navigate(`/signin?returnTo=${encodeURIComponent(routePath(route))}`, true);
     }
   }, [route, session]);
@@ -44,14 +46,17 @@ export default function LandingGateV5() {
     setSession(nextSession);
     navigate(route.kind === 'auth' ? safeReturnPath(route.returnTo) : '/studio', true);
   };
-  const logout = () => {
+  const logout = async () => {
+    try { await api.logout(); } catch { /* revocation may already have occurred */ }
     clearDemoSession();
+    window.sessionStorage.removeItem('twinerun.access-token');
     setSession(null);
     navigate('/signin', true);
   };
 
   if (route.kind === 'auth') return <AuthPage mode={route.mode} onAuthenticated={handleAuthenticated} />;
   if (route.kind === 'profile') return session ? <ProfilePage session={session} onLogout={logout} onOpenStudio={() => navigate('/studio')} /> : null;
+  if (route.kind === 'system') return session ? <SystemOverview /> : null;
   if (route.kind === 'studio') return session ? <App session={session} onLogout={logout} onOpenProfile={() => navigate('/profile')} /> : null;
   if (route.kind === 'not-found') return <NotFoundPage path={route.path} onHome={() => navigate('/')} />;
   if (route.kind === 'home') return <VesperHomeFinal onLaunchStudio={launchStudio} />;

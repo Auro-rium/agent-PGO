@@ -1,7 +1,8 @@
 import React, { FormEvent, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, LockKeyhole, Mail, UserRound } from "lucide-react";
 import { createDemoSession, DemoSession, nameFromEmail, setDemoSession } from "../auth/demoAuth";
-import { api } from "../lib/api";
+import { api, ApiError, DEMO_AUTH_ENABLED } from "../lib/api";
+import { navigate } from "../lib/router";
 
 interface AuthPageProps {
   mode: "signin" | "signup";
@@ -51,21 +52,35 @@ export const AuthPage: React.FC<AuthPageProps> = ({ mode, onAuthenticated }) => 
 
     setError("");
     setIsSubmitting(true);
-    // Keep the demo transition immediate while yielding once for button feedback.
+    // Yield once for button feedback, then authenticate against the backend.
     transitionTimer.current = window.setTimeout(async () => {
-      // The local identity remains a demo convenience, but the API receives a
-      // short-lived server token at runtime. We deliberately do not embed one
-      // in the public Vite bundle. If the backend is unavailable, preserve the
-      // existing local-only flow for offline design work.
       try {
-        const auth = await api.demoSignIn();
-        if (auth.accessToken) window.sessionStorage.setItem("twinerun.access-token", auth.accessToken);
-      } catch {
-        // Keep the frontend demo usable while the API is not running locally.
+        const auth = isSignUp ? await api.signUp(name.trim(), cleanEmail, password) : await api.signIn(cleanEmail, password);
+        const user = (auth.user && typeof auth.user === "object" ? auth.user : {}) as Record<string, unknown>;
+        const authenticatedName = typeof user.name === "string" ? user.name : (isSignUp ? name.trim() : nameFromEmail(cleanEmail));
+        const authenticatedEmail = typeof user.email === "string" ? user.email : cleanEmail;
+        const session = createDemoSession(authenticatedName, authenticatedEmail);
+        setDemoSession(session);
+        onAuthenticated(session);
+      } catch (cause) {
+        // Demo auth is an explicit development fallback only. Production-like
+        // auth errors are shown to the user and never silently become a local
+        // identity.
+        if (DEMO_AUTH_ENABLED && cause instanceof ApiError && [404, 503].includes(cause.status)) {
+          try {
+            const auth = await api.demoSignIn();
+            if (auth.accessToken) {
+              const session = createDemoSession(isSignUp ? name : nameFromEmail(cleanEmail), cleanEmail);
+              setDemoSession(session);
+              onAuthenticated(session);
+              transitionTimer.current = null;
+              return;
+            }
+          } catch { /* fall through to the original backend error */ }
+        }
+        setError(cause instanceof ApiError ? cause.message : "Unable to reach the authentication service.");
+        setIsSubmitting(false);
       }
-      const session = createDemoSession(isSignUp ? name : nameFromEmail(cleanEmail), cleanEmail);
-      setDemoSession(session);
-      onAuthenticated(session);
       transitionTimer.current = null;
     }, 80);
   };
@@ -80,7 +95,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ mode, onAuthenticated }) => 
       </header>
       <main className="auth-main">
         <section className="auth-card" aria-labelledby="auth-title">
-          <div className="auth-card-kicker">FRONTEND DEMO · NO BACKEND CONNECTED</div>
+          <div className="auth-card-kicker">TWINE RUN · SECURE WORKSPACE</div>
           <h1 id="auth-title">{isSignUp ? "Create your workspace." : "Welcome back."}</h1>
           <p className="auth-intro">
             {isSignUp ? "Start profiling where your agent is spending intelligence." : "Continue optimizing your agent with a measured execution plan."}
@@ -116,7 +131,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ mode, onAuthenticated }) => 
             {isSignUp ? "Already have a workspace?" : "New to twinerun?"}{" "}
             <a href={isSignUp ? "#signin" : "#signup"}>{isSignUp ? "Sign in" : "Create an account"}</a>
           </p>
-          <p className="auth-trust"><Check size={14} /> Local demo session only · no production changes</p>
+          <p className="auth-trust"><Check size={14} /> Server-authenticated workspace · production agents remain untouched</p>
         </section>
       </main>
     </div>
@@ -125,12 +140,21 @@ export const AuthPage: React.FC<AuthPageProps> = ({ mode, onAuthenticated }) => 
 
 interface ProfilePageProps {
   session: DemoSession;
-  onLogout: () => void;
+  onLogout: () => void | Promise<void>;
   onOpenStudio: () => void;
 }
 
-export const ProfilePage: React.FC<ProfilePageProps> = ({ session, onLogout, onOpenStudio }) => (
-  <div className="vesper-page auth-page profile-page">
+export const ProfilePage: React.FC<ProfilePageProps> = ({ session, onLogout, onOpenStudio }) => {
+  const [identity, setIdentity] = useState(session);
+  useEffect(() => {
+    let active = true;
+    void api.me().then((payload) => {
+      const user = payload.user && typeof payload.user === "object" ? payload.user as Record<string, unknown> : payload;
+      if (active && typeof user.name === "string" && typeof user.email === "string") setIdentity(createDemoSession(user.name, user.email));
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [session.email, session.name]);
+  return <div className="vesper-page auth-page profile-page">
     <div className="vesper-grain" aria-hidden="true" />
     <div className="vesper-photo" aria-hidden="true" />
     <header className="auth-header">
@@ -139,17 +163,18 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ session, onLogout, onO
     </header>
     <main className="auth-main">
       <section className="auth-card profile-card" aria-labelledby="profile-title">
-        <div className="profile-avatar" aria-hidden="true">{session.initials}</div>
-        <div className="auth-card-kicker">YOUR DEMO PROFILE</div>
-        <h1 id="profile-title">{session.name}</h1>
-        <p className="profile-email">{session.email}</p>
-        <div className="profile-note"><Check size={15} /> Frontend-only session active</div>
+        <div className="profile-avatar" aria-hidden="true">{identity.initials}</div>
+        <div className="auth-card-kicker">YOUR TWINE RUN PROFILE</div>
+        <h1 id="profile-title">{identity.name}</h1>
+        <p className="profile-email">{identity.email}</p>
+        <div className="profile-note"><Check size={15} /> Server session active · bearer token scoped to your workspace</div>
         <div className="profile-actions">
           <button className="vesper-btn vesper-btn--solid" onClick={onOpenStudio}>Open Studio <ArrowRight size={15} /></button>
-          <button className="vesper-btn vesper-btn--ghost" onClick={onLogout}>Log out</button>
+          <button className="vesper-btn vesper-btn--ghost" onClick={() => void onLogout()}>Log out</button>
+          <button className="vesper-btn vesper-btn--ghost" onClick={() => navigate("/system")}>Backend details</button>
         </div>
-        <p className="auth-trust">Your demo identity is stored in this browser only.</p>
+        <p className="auth-trust">Your identity is persisted by the backend. Sign out revokes the current session.</p>
       </section>
     </main>
-  </div>
-);
+  </div>;
+};

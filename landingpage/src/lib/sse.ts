@@ -8,7 +8,6 @@ export interface OptimizerStream {
 
 export function subscribeToOptimization(runId: string, onEvent: (event: OptimizerEvent) => void, onError: () => void, onTerminal: (status: string) => void): OptimizerStream {
   const seen = new Set<string>();
-  let source: EventSource | null = null;
   let pollTimer: number | null = null;
   let closed = false;
   let lastEventId = "";
@@ -37,12 +36,9 @@ export function subscribeToOptimization(runId: string, onEvent: (event: Optimize
     } catch { onError(); }
     if (!closed) pollTimer = window.setTimeout(poll, 2000);
   };
-  if (typeof EventSource !== "undefined" && !DEMO_ACCESS_TOKEN) {
-    source = new EventSource(`${API_BASE_URL}/optimization-runs/${encodeURIComponent(runId)}/events/stream`, { withCredentials: true });
-    source.onmessage = (message) => { try { emit(JSON.parse(message.data), message.lastEventId); } catch { onError(); } };
-    source.onerror = () => { source?.close(); source = null; onError(); void poll(); };
-  } else {
-    void poll();
-  }
-  return { close: () => { closed = true; source?.close(); if (pollTimer !== null) window.clearTimeout(pollTimer); } };
+  // The backend accepts bearer auth. Native EventSource cannot attach an
+  // Authorization header, so authenticated polling is the reliable browser
+  // transport until cookie-authenticated SSE is enabled.
+  void poll();
+  return { close: () => { closed = true; if (pollTimer !== null) window.clearTimeout(pollTimer); } };
 }

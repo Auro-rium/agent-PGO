@@ -7,6 +7,7 @@ export type BrowserRoute =
   | { kind: "section"; section: VesperRoute }
   | { kind: "auth"; mode: "signin" | "signup"; returnTo?: string }
   | { kind: "profile" }
+  | { kind: "system" }
   | { kind: "studio"; view: ViewMode }
   | { kind: "not-found"; path: string };
 
@@ -49,6 +50,7 @@ export const parsePath = (pathname: string, search = ""): BrowserRoute => {
     return { kind: "auth", mode: path.slice(1) as "signin" | "signup", returnTo: returnTo?.startsWith("/") ? returnTo : undefined };
   }
   if (path === "/profile") return { kind: "profile" };
+  if (path === "/system") return { kind: "system" };
   if (path === "/studio" || path === "/studio/graph") return { kind: "studio", view: "graph" };
   if (path.startsWith("/studio/")) {
     const view = path.slice("/studio/".length) as ViewMode;
@@ -92,6 +94,7 @@ export const routePath = (route: BrowserRoute): string => {
     case "section": return `/${route.section}`;
     case "auth": return `/${route.mode}${route.returnTo ? `?returnTo=${encodeURIComponent(route.returnTo)}` : ""}`;
     case "profile": return "/profile";
+    case "system": return "/system";
     case "studio": return studioPath(route.view);
     case "not-found": return route.path;
   }
