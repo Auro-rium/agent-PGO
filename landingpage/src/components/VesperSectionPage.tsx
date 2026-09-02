@@ -306,9 +306,13 @@ export const VesperSectionPage: React.FC<Props> = ({
           <p className="vesper-eyebrow">{page[0]}</p>
           <h1>{page[1]}</h1>
           <p>{page[2]}</p>
-          <a href={session ? "/studio" : "/signin?returnTo=%2Fstudio"} className="vesper-btn vesper-btn--solid">
-            Optimize an Agent <ArrowRight size={15} />
-          </a>
+          {route === "pricing" ? (
+            <button type="button" className="vesper-btn vesper-btn--solid" onClick={() => document.getElementById("plans")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Compare plans <ArrowRight size={15} /></button>
+          ) : (
+            <a href={session ? "/studio" : "/signin?returnTo=%2Fstudio"} className="vesper-btn vesper-btn--solid">
+              Optimize an Agent <ArrowRight size={15} />
+            </a>
+          )}
           {route === "pricing" && checkoutState === "starting" && <p className="vesper-checkout-note" role="status">Preparing secure checkout…</p>}
           {route === "pricing" && checkoutState === "error" && checkoutError && <p className="vesper-checkout-error" role="alert">{checkoutError}</p>}
         </section>
@@ -402,7 +406,7 @@ export const VesperSectionPage: React.FC<Props> = ({
         )}
         {route === "pricing" && (
           <section className="vesper-route-content">
-            <div className="vesper-pricing-grid">
+            <div id="plans" className="vesper-pricing-grid">
               {[
                 [
                   "FREE",
@@ -467,13 +471,18 @@ export const VesperSectionPage: React.FC<Props> = ({
                     ))}
                   </ul>
                   {index === 2 ? (
-                    <button type="button" className="vesper-btn vesper-btn--ghost vesper-btn--disabled" disabled>
-                      Coming later
-                    </button>
+                    <>
+                      <button type="button" className="vesper-btn vesper-btn--ghost vesper-btn--disabled" disabled>
+                        Coming later
+                      </button>
+                      <p className="vesper-plan-note">Team workspaces are not available at launch.</p>
+                    </>
                   ) : index === 0 ? (
                     <a href={signupPath} className="vesper-btn vesper-btn--ghost">Start Free <ArrowRight size={15} /></a>
                   ) : session ? (
-                    <button type="button" className="vesper-btn vesper-btn--solid" onClick={() => onStartCheckout?.(referralCode || undefined)}>Start Optimizing <ArrowRight size={15} /></button>
+                    <button type="button" className="vesper-btn vesper-btn--solid" onClick={() => onStartCheckout?.(referralCode || undefined)} disabled={checkoutState === "starting"} aria-busy={checkoutState === "starting"}>
+                      {checkoutState === "starting" ? "Opening secure checkout…" : "Start Optimizing"} <ArrowRight size={15} />
+                    </button>
                   ) : (
                     <a href={`/signin?returnTo=${encodeURIComponent(checkoutReturn)}`} className="vesper-btn vesper-btn--solid">Start Optimizing <ArrowRight size={15} /></a>
                   )}

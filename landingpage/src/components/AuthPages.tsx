@@ -169,7 +169,10 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ session, onLogout, onO
       if (entitlementResult.status === "fulfilled") {
         setEntitlements(entitlementResult.value);
         const confirmedPlan = String(entitlementResult.value.plan || "").toLowerCase();
-        if (confirmedPlan === "pro" || confirmedPlan === "team") window.sessionStorage.removeItem("twinerun.checkout.pending");
+        if (confirmedPlan === "pro" || confirmedPlan === "team") {
+          window.sessionStorage.removeItem("twinerun.checkout.pending");
+          window.sessionStorage.removeItem("twinerun.checkout.idempotency");
+        }
       }
       if (referralResult.status === "fulfilled") setReferrals(referralResult.value);
       if (entitlementResult.status === "rejected" && referralResult.status === "rejected") setAccountError("Account details are not available yet. Refresh after your workspace is ready.");

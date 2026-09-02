@@ -52,7 +52,12 @@ export default function LandingGateV5() {
     }
     setCheckoutState("starting"); setCheckoutError("");
     const storageKey = "twinerun.checkout.idempotency";
-    const idempotencyKey = window.sessionStorage.getItem(storageKey) || (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+    let existingAttempt = "";
+    try {
+      const pending = JSON.parse(window.sessionStorage.getItem("twinerun.checkout.pending") || "null") as { idempotencyKey?: string } | null;
+      existingAttempt = pending?.idempotencyKey || "";
+    } catch { /* stale pending state is ignored and replaced below */ }
+    const idempotencyKey = existingAttempt || window.sessionStorage.getItem(storageKey) || (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
     window.sessionStorage.setItem(storageKey, idempotencyKey);
     try {
       const result = await api.checkout("pro", referralCode, idempotencyKey);

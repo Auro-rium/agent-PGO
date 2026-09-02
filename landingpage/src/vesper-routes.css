@@ -52,3 +52,5 @@
   .vesper-benchmark-route .vesper-chart { min-height: 350px; }
   .vesper-benchmark-route .vesper-chart svg { height: 260px; }
 }
+
+.vesper-plan-note { margin-top: 10px; color: #777; font-size: 11px; line-height: 1.45; }
