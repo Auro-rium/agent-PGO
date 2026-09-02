@@ -31,6 +31,7 @@ from services.billing.referrals import qualify_referral
 
 class DodoClient(Protocol):
     def create_checkout_session(self, payload: dict[str, Any], *, idempotency_key: str) -> dict[str, Any]: ...
+    def create_customer_portal_session(self, customer_id: str, *, return_url: str | None = None) -> dict[str, Any]: ...
 
 
 class DodoConfigurationError(RuntimeError):
@@ -74,6 +75,28 @@ class HttpDodoClient:
             raise DodoProviderError("Dodo checkout request failed") from exc
         if not isinstance(result, dict) or not result.get("session_id"):
             raise DodoProviderError("Dodo returned an invalid checkout response")
+        return result
+
+    def create_customer_portal_session(self, customer_id: str, *, return_url: str | None = None) -> dict[str, Any]:
+        token = (os.getenv("DODO_PAYMENTS_API_KEY") or os.getenv("DODO_API_KEY") or "").strip()
+        if not token:
+            raise DodoConfigurationError("Dodo portal is not configured")
+        environment = os.getenv("DODO_PAYMENTS_ENVIRONMENT", "test_mode").strip().lower()
+        base_url = os.getenv("DODO_API_BASE_URL", "https://live.dodopayments.com" if environment == "live_mode" else "https://test.dodopayments.com").strip().rstrip("/")
+        payload = {"return_url": return_url} if return_url else {}
+        req = UrlRequest(
+            f"{base_url}/customers/{customer_id}/customer-portal/session",
+            data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
+            method="POST",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"},
+        )
+        try:
+            with urlopen(req, timeout=float(os.getenv("DODO_TIMEOUT_SECONDS", "15"))) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+            raise DodoProviderError("Dodo customer portal request failed") from exc
+        if not isinstance(result, dict) or not (result.get("link") or result.get("portal_url")):
+            raise DodoProviderError("Dodo returned an invalid portal response")
         return result
 
 
@@ -266,6 +289,24 @@ def register_billing_routes(app: Any, *, get_tenant: Any, get_user: Any, get_ses
         if organization is None:
             raise HTTPException(status_code=404, detail="Workspace not found")
         return {"organizationId": organization.id, "plan": organization.plan, "status": organization.plan_status, "source": organization.plan_source, "expiresAt": organization.plan_expires_at.isoformat() if organization.plan_expires_at else None, "subscriptionId": organization.dodo_subscription_id}
+
+    @app.post("/v1/billing/portal", tags=["billing"])
+    def billing_portal(tenant: Any = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        organization = session.get(Organization, tenant.organization_id)
+        if organization is None:
+            raise HTTPException(status_code=404, detail="Workspace not found")
+        if organization.plan != "pro" or organization.plan_status != "active":
+            raise HTTPException(status_code=409, detail="An active Pro subscription is required")
+        if not organization.dodo_customer_id:
+            raise HTTPException(status_code=409, detail="No Dodo customer is linked to this workspace")
+        return_url = os.getenv("DODO_PAYMENTS_RETURN_URL", "").strip() or os.getenv("APP_ORIGIN", "").rstrip("/") + "/profile"
+        try:
+            result = app.state.dodo_client.create_customer_portal_session(organization.dodo_customer_id, return_url=return_url or None)
+        except DodoConfigurationError as exc:
+            raise HTTPException(status_code=503, detail="Billing portal is not configured") from exc
+        except DodoProviderError as exc:
+            raise HTTPException(status_code=502, detail="Unable to create billing portal session") from exc
+        return {"url": result.get("link") or result.get("portal_url")}
 
     @app.post("/v1/billing/webhooks/dodo", tags=["billing"])
     async def dodo_webhook(request: Request, session: Session = Depends(get_session)) -> dict[str, Any]:
