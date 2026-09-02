@@ -60,7 +60,10 @@ export const parsePath = (pathname: string, search = ""): BrowserRoute => {
 };
 
 export const parseBrowserLocation = (location: Pick<Location, "pathname" | "search" | "hash"> = window.location): ParsedLocation => {
-  const legacyPath = legacyHashPath(location.hash);
+  // An empty hash is the normal state for real browser paths. Only interpret
+  // an explicitly supplied legacy hash; otherwise `/signin`, `/studio`, and
+  // section URLs were incorrectly reset to `/` on every page load.
+  const legacyPath = location.hash ? legacyHashPath(location.hash) : null;
   return legacyPath ? { route: parsePath(legacyPath), legacyPath } : { route: parsePath(location.pathname, location.search) };
 };
 

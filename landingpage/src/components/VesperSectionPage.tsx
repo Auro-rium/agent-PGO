@@ -120,7 +120,7 @@ function Header({ onLaunchStudio }: { onLaunchStudio: () => void }) {
     <>
       <header className="vesper-header vesper-header--long vesper-route-header">
         <a
-          href="#top"
+          href="/"
           className="vesper-logo"
           onClick={close}
           aria-label="TwineRun home"
@@ -131,7 +131,7 @@ function Header({ onLaunchStudio }: { onLaunchStudio: () => void }) {
           {links.map(([id, label]) => (
             <a
               key={id}
-              href={`#${id}`}
+              href={`/${id}`}
               className="vesper-nav-link"
               onClick={close}
             >
@@ -140,12 +140,9 @@ function Header({ onLaunchStudio }: { onLaunchStudio: () => void }) {
           ))}
         </nav>
         <div className="vesper-header-actions">
-          <button
-            className="vesper-btn vesper-btn--solid vesper-header-cta"
-            onClick={onLaunchStudio}
-          >
+          <a href="/signin?returnTo=%2Fstudio" className="vesper-btn vesper-btn--solid vesper-header-cta">
             Launch twinerun
-          </button>
+          </a>
           <button
             className="vesper-burger"
             onClick={() => setOpen((value) => !value)}
@@ -165,19 +162,16 @@ function Header({ onLaunchStudio }: { onLaunchStudio: () => void }) {
         {links.map(([id, label]) => (
           <a
             key={id}
-            href={`#${id}`}
+            href={`/${id}`}
             className="vesper-mobile-link"
             onClick={close}
           >
             {label}
           </a>
         ))}
-        <button
-          className="vesper-btn vesper-btn--solid vesper-mobile-cta"
-          onClick={onLaunchStudio}
-        >
+        <a href="/signin?returnTo=%2Fstudio" className="vesper-btn vesper-btn--solid vesper-mobile-cta">
           Launch twinerun <ArrowRight size={15} />
-        </button>
+        </a>
       </nav>
     </>
   );
@@ -301,12 +295,9 @@ export const VesperSectionPage: React.FC<Props> = ({
           <p className="vesper-eyebrow">{page[0]}</p>
           <h1>{page[1]}</h1>
           <p>{page[2]}</p>
-          <button
-            className="vesper-btn vesper-btn--solid"
-            onClick={onLaunchStudio}
-          >
+          <a href="/signin?returnTo=%2Fstudio" className="vesper-btn vesper-btn--solid">
             Optimize an Agent <ArrowRight size={15} />
-          </button>
+          </a>
         </section>
         {route === "benefits" && (
           <section className="vesper-route-content">
@@ -368,7 +359,7 @@ export const VesperSectionPage: React.FC<Props> = ({
                   <div>P95 <b>{(selectedBenchmark.id === "42" ? selectedBenchmark.latencySec : selectedBenchmark.p95LatencySec).toFixed(1)}s</b></div>
                   <div className="vesper-savings"><b>{selectedBenchmark.savingsPct.toFixed(1)}% lower cost</b></div>
                 </div>
-                <button className="vesper-btn vesper-btn--solid" onClick={onLaunchStudio}>Optimize an Agent <ArrowRight size={15} /></button>
+                <a href="/signin?returnTo=%2Fstudio" className="vesper-btn vesper-btn--solid">Optimize an Agent <ArrowRight size={15} /></a>
               </aside>
             </div>
             <p className="vesper-demo-note">Set your quality tolerance. twinerun searches the model space and shows you the configurations that survive it.</p>
@@ -462,9 +453,8 @@ export const VesperSectionPage: React.FC<Props> = ({
                       </li>
                     ))}
                   </ul>
-                  <button
+                  <a href="/signin?returnTo=%2Fstudio"
                     className={`vesper-btn ${index === 1 ? "vesper-btn--solid" : "vesper-btn--ghost"}`}
-                    onClick={onLaunchStudio}
                   >
                     {index === 0
                       ? "Start Free"
@@ -472,7 +462,7 @@ export const VesperSectionPage: React.FC<Props> = ({
                         ? "Start Optimizing"
                         : "Start with Team"}{" "}
                     <ArrowRight size={15} />
-                  </button>
+                  </a>
                 </article>
               ))}
             </div>
@@ -483,12 +473,11 @@ export const VesperSectionPage: React.FC<Props> = ({
                 <p>We profile and optimize it with you.</p>
               </div>
               <strong>From $2,500</strong>
-              <button
+              <a href="/signin?returnTo=%2Fstudio"
                 className="vesper-btn vesper-btn--ghost"
-                onClick={onLaunchStudio}
               >
                 Talk to Us <ArrowRight size={15} />
-              </button>
+              </a>
             </div>
           </section>
         )}
