@@ -38,7 +38,7 @@ from .auth import (
     verify_password,
 )
 from .db import create_session_factory, session_dependency
-from .models import AuthSession, Job, Membership, Organization, Project, ProjectLayout, ProjectSettings, ProjectVersion, Trace, User, utc_now
+from .models import AuthSession, Job, Membership, Organization, Project, ProjectLayout, ProjectSettings, ProjectVersion, Referral, ReferralCode, ReferralReward, Trace, User, utc_now
 from .project_serializers import (
     GraphValidationError,
     serialize_layout,
@@ -50,6 +50,13 @@ from .project_serializers import (
 from .schemas import IngestionResponse, OTLPExportRequest
 from .trace_serializers import decode_cursor, encode_cursor, serialize_trace, serialize_trace_detail, trace_metrics
 from services.worker.queue import SQSQueuePublisher
+from services.billing.referrals import (
+    ReferralPolicyError,
+    attribute_signup,
+    find_valid_code,
+    get_or_create_code,
+    referral_summary,
+)
 
 try:
     from services.contracts import JobPayload
@@ -62,9 +69,116 @@ MAX_EVAL_GRADERS = 64
 MAX_CONFIG_CANDIDATES = 256
 MAX_CONFIG_BYTES = 256 * 1024
 MAX_TRACE_PAGE_SIZE = 100
+PLAN_LIMITS: dict[str, dict[str, int | float]] = {
+    "free": {
+        "maxProjects": 3,
+        "maxTraceSpansPerMonth": 100_000,
+        "maxEvalCases": 1_000,
+        "maxOptimizationRunsPerMonth": 5,
+        "maxProviderSpendUsdPerMonth": 25,
+        "maxExperimentCostUsd": 25,
+        "retentionDays": 7,
+    },
+    "pro": {
+        "maxProjects": 25,
+        "maxTraceSpansPerMonth": 1_000_000,
+        "maxEvalCases": 100_000,
+        "maxOptimizationRunsPerMonth": 100,
+        "maxProviderSpendUsdPerMonth": 500,
+        "maxExperimentCostUsd": 500,
+        "retentionDays": 90,
+    },
+}
 DEFAULT_APP_ORIGIN = "https://2syexxoronpapxxxhzu6grgi4a0limkr.lambda-url.us-east-1.on.aws"
 CONTENT_KEY = re.compile(r"(?:^|[._-])(prompt|input|completion|output|content|message|messages|secret|password|authorization|api[-_]?key)(?:$|[._-])", re.I)
 REDACTED = "[REDACTED]"
+
+
+def _month_start() -> datetime:
+    now = datetime.now(timezone.utc)
+    return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+def _entitlement_snapshot(organization_id: str, session: Session) -> dict[str, Any]:
+    organization = session.get(Organization, organization_id)
+    if organization is None:
+        raise HTTPException(status_code=401, detail="Organization no longer exists")
+    requested_plan = str(organization.plan or "free").lower()
+    if requested_plan not in PLAN_LIMITS:
+        requested_plan = "free"
+    status = str(organization.plan_status or "active").lower()
+    expires_at = organization.plan_expires_at
+    if expires_at is not None:
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at <= datetime.now(timezone.utc):
+            status = "expired"
+    # Paid capabilities are only active when the entitlement state is active.
+    # A canceled/past-due/expired Pro organization keeps its source metadata
+    # but is evaluated against Free limits until reactivated.
+    plan = requested_plan if requested_plan == "free" or status == "active" else "free"
+    period_start = _month_start()
+    project_count = int(session.scalar(select(func.count(Project.id)).where(Project.organization_id == organization_id)) or 0)
+    trace_count = int(session.scalar(select(func.count(Trace.id)).where(Trace.organization_id == organization_id, Trace.received_at >= period_start)) or 0)
+    dataset_cls = getattr(api_models, "EvalDataset", None)
+    case_cls = getattr(api_models, "EvalCase", None)
+    eval_case_count = 0
+    if dataset_cls is not None and case_cls is not None:
+        eval_case_count = int(session.scalar(select(func.count(case_cls.id)).join(dataset_cls, case_cls.dataset_id == dataset_cls.id).where(dataset_cls.organization_id == organization_id)) or 0)
+    optimization_count = int(session.scalar(select(func.count(Job.id)).where(Job.organization_id == organization_id, Job.kind == "optimization", Job.created_at >= period_start)) or 0)
+    limits = PLAN_LIMITS[plan]
+    usage = {
+        "projects": project_count,
+        "traceSpansThisMonth": trace_count,
+        "evalCases": eval_case_count,
+        "optimizationRunsThisMonth": optimization_count,
+    }
+    return {
+        "organizationId": organization_id,
+        "plan": plan,
+        "status": str(organization.plan_status or "active").lower(),
+        "source": str(organization.plan_source or "manual"),
+        "limits": dict(limits),
+        "usage": usage,
+        "periodStart": period_start.isoformat(),
+        "planExpiresAt": expires_at.isoformat() if expires_at else None,
+        "features": {
+            "optimization": True,
+            "hostedTraces": True,
+            "scheduledOptimization": plan == "pro",
+            "teamAccess": plan == "pro",
+        },
+    }
+
+
+def _enforce_quota(organization_id: str, resource: str, amount: int | float, session: Session) -> None:
+    snapshot = _entitlement_snapshot(organization_id, session)
+    limit_name = {
+        "projects": "maxProjects",
+        "traceSpans": "maxTraceSpansPerMonth",
+        "evalCases": "maxEvalCases",
+        "optimizationRuns": "maxOptimizationRunsPerMonth",
+    }[resource]
+    usage_name = {
+        "projects": "projects",
+        "traceSpans": "traceSpansThisMonth",
+        "evalCases": "evalCases",
+        "optimizationRuns": "optimizationRunsThisMonth",
+    }[resource]
+    if float(snapshot["usage"][usage_name]) + float(amount) > float(snapshot["limits"][limit_name]):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "ENTITLEMENT_LIMIT_REACHED",
+                "message": f"{resource} quota exceeded for the {snapshot['plan']} plan",
+                "fields": {
+                    "plan": snapshot["plan"],
+                    "limit": limit_name,
+                    "usage": snapshot["usage"][usage_name],
+                    "requested": amount,
+                },
+            },
+        )
 
 
 def _request_id(request: Request) -> str:
@@ -91,11 +205,11 @@ def _error_code(status_code: int) -> str:
     }.get(status_code, "REQUEST_FAILED")
 
 
-def _error_response(request: Request, status_code: int, message: str, *, fields: dict[str, Any] | None = None, headers: dict[str, str] | None = None) -> JSONResponse:
+def _error_response(request: Request, status_code: int, message: str, *, fields: dict[str, Any] | None = None, headers: dict[str, str] | None = None, code: str | None = None) -> JSONResponse:
     request_id = getattr(request.state, "request_id", None) or _request_id(request)
     body = {
         "error": {
-            "code": _error_code(status_code),
+            "code": code or _error_code(status_code),
             "message": message,
             "requestId": request_id,
             "fields": fields or {},
@@ -254,6 +368,7 @@ class AuthSignup(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     email: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=8, max_length=256)
+    referral_code: str | None = Field(default=None, alias="referralCode", min_length=1, max_length=64)
 
     @field_validator("email")
     @classmethod
@@ -279,6 +394,10 @@ class AuthSignin(BaseModel):
     @classmethod
     def normalize_login_email(cls, value: str) -> str:
         return normalize_email(value)
+
+
+class ReferralCodeValidation(BaseModel):
+    code: str = Field(min_length=1, max_length=64)
 
 
 class AuthProfilePatch(BaseModel):
@@ -411,6 +530,7 @@ def _case_values(case: dict[str, Any], index: int) -> dict[str, Any]:
 
 def _create_dataset(body: EvalCreate, *, tenant: Tenant, project: Project, session: Session, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
     dataset_cls, case_cls, grader_cls = _model("EvalDataset"), _model("EvalCase"), _model("EvalGrader")
+    _enforce_quota(tenant.organization_id, "evalCases", len(body.cases), session)
     dataset = dataset_cls(organization_id=tenant.organization_id, project_id=project.id, name=body.name, version=1, metadata_json=metadata or {})
     session.add(dataset)
     session.flush()
@@ -423,7 +543,7 @@ def _create_dataset(body: EvalCreate, *, tenant: Tenant, project: Project, sessi
     return {"id": dataset.id, "project_id": project.id, "organization_id": tenant.organization_id, "name": dataset.name, "cases": body.cases, "graders": body.graders, "version": dataset.version}
 
 
-def create_app(*, session_factory: sessionmaker[Session] | None = None, database_url: str | None = None, queue_publisher: Any | None = None) -> FastAPI:
+def create_app(*, session_factory: sessionmaker[Session] | None = None, database_url: str | None = None, queue_publisher: Any | None = None, dodo_client: Any | None = None) -> FastAPI:
     factory = session_factory or create_session_factory(database_url)
     get_tenant, get_session = _tenant_dependency(factory)
     app = FastAPI(title="AgentPGO API", version="1.0.0")
@@ -447,6 +567,10 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
     )
     app.state.session_factory = factory
     app.state.queue_publisher = queue_publisher
+    # Billing uses an injectable provider boundary; production defaults to a
+    # small REST client, while tests inject a deterministic fake.
+    from .billing import HttpDodoClient, register_billing_routes
+    app.state.dodo_client = dodo_client or HttpDodoClient()
     if app.state.queue_publisher is None and os.getenv("SQS_QUEUE_URL"):
         app.state.queue_publisher = SQSQueuePublisher(os.environ["SQS_QUEUE_URL"])
 
@@ -471,16 +595,19 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
     async def http_exception_handler(request: Request, exc: HTTPException):
         detail = exc.detail
         fields: dict[str, Any] = {}
+        code: str | None = None
         if isinstance(detail, dict):
             message = str(detail.get("message", "Request failed."))
             if isinstance(detail.get("fields"), dict):
                 fields = detail["fields"]
+            if detail.get("code"):
+                code = str(detail["code"])
         elif isinstance(detail, list):
             message = "Request validation failed."
             fields = {str(index): str(item) for index, item in enumerate(detail)}
         else:
             message = str(detail) if detail else "Request failed."
-        return _error_response(request, exc.status_code, message, fields=fields, headers=exc.headers)
+        return _error_response(request, exc.status_code, message, fields=fields, headers=exc.headers, code=code)
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
@@ -527,6 +654,17 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
         session.add_all([user, organization])
         session.flush()
         session.add(Membership(user_id=user.id, organization_id=organization.id, role="owner"))
+        if body.referral_code:
+            try:
+                attribute_signup(
+                    session,
+                    code=body.referral_code,
+                    invitee_user=user,
+                    invitee_organization=organization,
+                )
+            except ReferralPolicyError as exc:
+                session.rollback()
+                raise HTTPException(status_code=422, detail={"code": exc.code, "message": exc.message}) from exc
         raw_token, auth_session = issue_session(user_id=user.id)
         session.add(auth_session)
         try:
@@ -535,6 +673,63 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
             session.rollback()
             raise HTTPException(status_code=409, detail="Unable to create account with those details") from exc
         return auth_result(user, raw_token, 60 * 60 * 24 * 30)
+
+    @app.post("/v1/referrals/code", status_code=201, tags=["referrals"])
+    def create_referral_code(response: Response, user: User = Depends(get_user), session: Session = Depends(get_session)) -> dict[str, Any]:
+        membership = session.scalar(select(Membership).where(Membership.user_id == user.id).order_by(Membership.created_at))
+        if membership is None:
+            raise HTTPException(status_code=403, detail="User has no organization membership")
+        organization = session.get(Organization, membership.organization_id)
+        if organization is None:
+            raise HTTPException(status_code=403, detail="Organization no longer exists")
+        existing = session.scalar(select(ReferralCode).where(ReferralCode.organization_id == organization.id, ReferralCode.active.is_(True)))
+        try:
+            code = get_or_create_code(session, organization=organization, user=user)
+            session.commit()
+        except ReferralPolicyError as exc:
+            session.rollback()
+            raise HTTPException(status_code=403, detail={"code": exc.code, "message": exc.message}) from exc
+        if existing is not None:
+            response.status_code = 200
+        return {"id": code.id, "code": code.code, "active": code.active, "createdAt": code.created_at.isoformat()}
+
+    @app.get("/v1/referrals", tags=["referrals"])
+    def list_referrals(user: User = Depends(get_user), session: Session = Depends(get_session)) -> dict[str, Any]:
+        membership = session.scalar(select(Membership).where(Membership.user_id == user.id).order_by(Membership.created_at))
+        if membership is None:
+            raise HTTPException(status_code=403, detail="User has no organization membership")
+        organization_id = membership.organization_id
+        code = session.scalar(select(ReferralCode).where(ReferralCode.organization_id == organization_id, ReferralCode.active.is_(True)))
+        rows = list(session.scalars(select(Referral).where(Referral.referrer_organization_id == organization_id).order_by(Referral.created_at.desc())).all())
+        return {
+            "code": code.code if code else None,
+            "referrals": [
+                {
+                    "id": row.id,
+                    "status": row.status,
+                    "inviteeEmail": row.invitee_user.email if row.invitee_user else None,
+                    "subscriptionId": row.subscription_id,
+                    "expiresAt": row.attribution_expires_at.isoformat(),
+                    "qualifiedAt": row.qualified_at.isoformat() if row.qualified_at else None,
+                    "rewardCount": len(row.rewards),
+                }
+                for row in rows
+            ],
+            "summary": referral_summary(session, organization_id=organization_id),
+        }
+
+    @app.post("/v1/referrals/validate", tags=["referrals"])
+    def validate_referral_code(body: ReferralCodeValidation, session: Session = Depends(get_session)) -> dict[str, Any]:
+        code = body.code.strip().upper()
+        return {"valid": find_valid_code(session, code) is not None, "code": code}
+
+    @app.get("/v1/entitlements", tags=["billing"])
+    def entitlements(tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        snapshot = _entitlement_snapshot(tenant.organization_id, session)
+        snapshot["referrals"] = referral_summary(session, organization_id=tenant.organization_id)
+        code = session.scalar(select(ReferralCode).where(ReferralCode.organization_id == tenant.organization_id, ReferralCode.active.is_(True)))
+        snapshot["referralCode"] = code.code if code else None
+        return snapshot
 
     @app.post("/v1/auth/signin", tags=["auth"])
     def signin(body: AuthSignin, session: Session = Depends(get_session)) -> dict[str, Any]:
@@ -716,6 +911,7 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
     @app.post("/v1/projects", response_model=ProjectResponse, status_code=201, tags=["projects"])
     def create_project(body: ProjectCreate, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)):
         if tenant.project_id: raise HTTPException(status_code=403, detail="Project-scoped API keys cannot create projects")
+        _enforce_quota(tenant.organization_id, "projects", 1, session)
         project = Project(organization_id=tenant.organization_id, name=body.name, slug=body.slug)
         session.add(project)
         try: session.commit()
@@ -1122,6 +1318,7 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
             raw_span = redacted_span if os.getenv("AGENTPGO_STORE_RAW_SPAN", "").lower() in {"1", "true", "yes"} else {}
             session.add(Trace(organization_id=tenant.organization_id, project_id=project.id, trace_id=key[0], span_id=key[1], parent_span_id=span.parent_span_id.lower() if span.parent_span_id else None, name=span.name, kind=span.kind, start_time=_nanos_to_datetime(span.start_time_unix_nano), end_time=_nanos_to_datetime(span.end_time_unix_nano), status_code=span.status.code if span.status else None, status_message=REDACTED if span.status and span.status.message else None, service_name=service_name if isinstance(service_name, str) else None, resource_attributes=_redact(resource_attributes), attributes=_attributes(span.attributes), events=_redact(span.events), links=_redact(span.links), scope=scope, raw_span=raw_span))
             accepted += 1
+        _enforce_quota(tenant.organization_id, "traceSpans", accepted, session)
         session.commit(); return IngestionResponse(accepted=accepted)
 
     @app.get("/v1/projects/{project_id}/profile", response_model=dict[str, Any], tags=["profile"])
@@ -1238,6 +1435,7 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
         dataset_cls, case_cls = _model("EvalDataset"), _model("EvalCase")
         dataset = session.scalar(select(dataset_cls).where(dataset_cls.id == dataset_id, dataset_cls.organization_id == tenant.organization_id))
         if dataset is None or (tenant.project_id and dataset.project_id != tenant.project_id): raise HTTPException(status_code=404, detail="Evaluation dataset not found")
+        _enforce_quota(tenant.organization_id, "evalCases", len(cases), session)
         current = len(dataset.cases); [session.add(case_cls(dataset_id=dataset.id, **_case_values(case, current + i))) for i, case in enumerate(cases)]
         dataset.version += 1; session.commit(); return {"id": dataset.id, "case_count": current + len(cases), "version": dataset.version}
 
@@ -1356,6 +1554,18 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
                 existing_job = session.get(Job, existing.job_id)
                 if existing_job is not None:
                     return RunResponse(run_id=existing_job.id, status=existing_job.status)
+        if kind == "optimization":
+            _enforce_quota(tenant.organization_id, "optimizationRuns", 1, session)
+            snapshot = _entitlement_snapshot(tenant.organization_id, session)
+            if body.max_experiment_cost_usd > float(snapshot["limits"]["maxExperimentCostUsd"]):
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "code": "ENTITLEMENT_LIMIT_REACHED",
+                        "message": "Requested experiment budget exceeds the plan limit",
+                        "fields": {"plan": snapshot["plan"], "limit": "maxExperimentCostUsd", "requested": body.max_experiment_cost_usd, "maximum": snapshot["limits"]["maxExperimentCostUsd"]},
+                    },
+                )
         session.add(job)
         if idem_cls is not None and idempotency_key:
             session.add(idem_cls(
@@ -1624,6 +1834,10 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
         if payload.get("run_id"):
             result.update(_persisted_export(project.id, payload["run_id"], tenant, session))
         return result
+
+    # Register the billing routes before aliasing so they are exposed under
+    # both /v1 and /api/v1 without duplicating endpoint implementations.
+    register_billing_routes(app, get_tenant=get_tenant, get_user=get_user, get_session=get_session)
 
     # Register browser-facing aliases after the canonical /v1 routes have been
     # declared. Cloning APIRoute metadata preserves response models,

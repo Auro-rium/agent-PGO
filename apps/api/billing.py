@@ -26,6 +26,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .models import BillingCheckout, BillingWebhookEvent, Membership, Organization, User, utc_now
+from services.billing.referrals import qualify_referral
 
 
 class DodoClient(Protocol):
@@ -187,6 +188,15 @@ def _apply_subscription_event(session: Session, event_type: str, payload: dict[s
     organization.dodo_subscription_status = normalized.rsplit(".", 1)[-1]
     if expiry:
         organization.plan_expires_at = expiry
+    # The first successful recurring billing event is the qualification point
+    # for early-Pro referrals. Rewards remain a durable pending ledger until a
+    # provider-specific gateway applies the free month.
+    if normalized == "subscription.renewed" and subscription_id:
+        qualify_referral(
+            session,
+            invitee_organization_id=organization.id,
+            subscription_id=subscription_id,
+        )
     return True
 
 

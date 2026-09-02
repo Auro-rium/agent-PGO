@@ -65,11 +65,101 @@ class AuthSession(Base):
     user: Mapped[User] = relationship(back_populates="sessions")
 
 
+class ReferralCode(Base):
+    """One shareable early-access code owned by a Pro organization."""
+
+    __tablename__ = "referral_codes"
+    __table_args__ = (
+        UniqueConstraint("organization_id", name="uq_referral_codes_organization"),
+        UniqueConstraint("code", name="uq_referral_codes_code"),
+        Index("ix_referral_codes_active", "code", "active"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    organization: Mapped[Organization] = relationship(back_populates="referral_codes")
+    created_by: Mapped[User] = relationship()
+    referrals: Mapped[list[Referral]] = relationship(back_populates="code", cascade="all, delete-orphan")
+
+
+class Referral(Base):
+    """Attribution between a Pro referrer and a newly-created workspace."""
+
+    __tablename__ = "referrals"
+    __table_args__ = (
+        UniqueConstraint("invitee_organization_id", name="uq_referrals_invitee_organization"),
+        Index("ix_referrals_referrer_status", "referrer_organization_id", "status"),
+        Index("ix_referrals_invitee_status", "invitee_organization_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    referral_code_id: Mapped[str] = mapped_column(String(36), ForeignKey("referral_codes.id", ondelete="CASCADE"), nullable=False, index=True)
+    referrer_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    referrer_organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    invitee_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    invitee_organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="PENDING", index=True)
+    subscription_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    attribution_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    qualified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    code: Mapped[ReferralCode] = relationship(back_populates="referrals")
+    referrer_organization: Mapped[Organization] = relationship(foreign_keys=[referrer_organization_id], back_populates="referrals")
+    invitee_organization: Mapped[Organization] = relationship(foreign_keys=[invitee_organization_id])
+    referrer_user: Mapped[User] = relationship(foreign_keys=[referrer_user_id])
+    invitee_user: Mapped[User] = relationship(foreign_keys=[invitee_user_id])
+    rewards: Mapped[list[ReferralReward]] = relationship(back_populates="referral", cascade="all, delete-orphan")
+
+
+class ReferralReward(Base):
+    """Idempotent free-Pro-month reward ledger entry."""
+
+    __tablename__ = "referral_rewards"
+    __table_args__ = (
+        UniqueConstraint("referral_id", "recipient_organization_id", name="uq_referral_rewards_recipient"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    referral_id: Mapped[str] = mapped_column(String(36), ForeignKey("referrals.id", ondelete="CASCADE"), nullable=False, index=True)
+    recipient_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    recipient_organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    reward_type: Mapped[str] = mapped_column(String(32), nullable=False, default="FREE_PRO_MONTH")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="PENDING", index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    provider_reference: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    rewarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reversal_reason: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    referral: Mapped[Referral] = relationship(back_populates="rewards")
+    recipient_organization: Mapped[Organization] = relationship(foreign_keys=[recipient_organization_id], back_populates="referral_rewards")
+    recipient_user: Mapped[User] = relationship(foreign_keys=[recipient_user_id])
+
+
 class Organization(Base):
     __tablename__ = "organizations"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    plan: Mapped[str] = mapped_column(String(16), nullable=False, default="free")
+    plan_status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    plan_source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
+    plan_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Dodo identifiers are non-secret references used to reconcile webhook
+    # deliveries with the owning workspace. Provider credentials never live
+    # in this table.
+    dodo_customer_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    dodo_subscription_id: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
+    dodo_subscription_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
@@ -79,6 +169,66 @@ class Organization(Base):
     api_keys: Mapped[list[ApiKey]] = relationship(back_populates="organization", cascade="all, delete-orphan")
     traces: Mapped[list[Trace]] = relationship(back_populates="organization", cascade="all, delete-orphan")
     memberships: Mapped[list[Membership]] = relationship(back_populates="organization", cascade="all, delete-orphan")
+    referral_codes: Mapped[list[ReferralCode]] = relationship(back_populates="organization", cascade="all, delete-orphan")
+    referrals: Mapped[list[Referral]] = relationship(
+        back_populates="referrer_organization",
+        foreign_keys="Referral.referrer_organization_id",
+        cascade="all, delete-orphan",
+    )
+    referral_rewards: Mapped[list[ReferralReward]] = relationship(
+        back_populates="recipient_organization",
+        foreign_keys="ReferralReward.recipient_organization_id",
+        cascade="all, delete-orphan",
+    )
+    billing_checkouts: Mapped[list[BillingCheckout]] = relationship(back_populates="organization", cascade="all, delete-orphan")
+
+
+class BillingCheckout(Base):
+    """Server-created Dodo checkout session and its idempotency record."""
+
+    __tablename__ = "billing_checkouts"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "idempotency_key", name="uq_billing_checkouts_org_idempotency"),
+        Index("ix_billing_checkouts_provider_session", "provider_session_id"),
+        Index("ix_billing_checkouts_organization_created", "organization_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    plan: Mapped[str] = mapped_column(String(16), nullable=False, default="pro")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider_session_id: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
+    checkout_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    metadata_json: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+    organization: Mapped[Organization] = relationship(back_populates="billing_checkouts")
+
+
+class BillingWebhookEvent(Base):
+    """Durable Dodo webhook receipt used for signature/audit/idempotency."""
+
+    __tablename__ = "billing_webhook_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    provider_event_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    event_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="received", index=True)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Project(Base):

@@ -11,6 +11,22 @@ from .queue import InMemoryQueue, SQSQueueConsumer
 from .runtime import WorkerRuntime
 
 
+def _unconfigured_candidate_executor(candidate: dict, _job: object) -> dict:
+    """Fail closed until a real agent/provider executor is wired.
+
+    ``WorkerRuntime`` keeps its injectable default for deterministic library
+    tests and local callers.  The process entrypoint must not use that echo
+    path: it would turn client-supplied cost/quality fields into a seemingly
+    verified recommendation without making a provider call.
+    """
+
+    del candidate, _job
+    raise RuntimeError(
+        "candidate executor is not configured; refusing to publish an "
+        "unverified optimization result"
+    )
+
+
 def build_runtime() -> WorkerRuntime:
     factory = create_session_factory(os.getenv("DATABASE_URL"))
     queue_url = os.getenv("SQS_QUEUE_URL")
@@ -22,6 +38,7 @@ def build_runtime() -> WorkerRuntime:
         factory,
         queue,
         worker_id=os.getenv("WORKER_ID"),
+        candidate_executor=_unconfigured_candidate_executor,
         lease_seconds=int(os.getenv("WORKER_LEASE_SECONDS", "60")),
         visibility_timeout=int(os.getenv("SQS_VISIBILITY_TIMEOUT", "60")),
         max_receive_count=int(os.getenv("SQS_MAX_RECEIVE_COUNT", "3")),
