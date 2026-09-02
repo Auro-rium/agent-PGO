@@ -2,25 +2,42 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
+import time
 from datetime import datetime, timezone
 from statistics import quantiles
 from typing import Any
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import desc, func, or_, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from . import models as api_models
-from .auth import Tenant, _configured_demo_tenant, _demo_enabled, authenticate, issue_api_key, issue_demo_token, revoke_api_key
+from .auth import (
+    Tenant,
+    _configured_demo_tenant,
+    _demo_enabled,
+    authenticate,
+    authenticate_user,
+    hash_password,
+    issue_api_key,
+    issue_demo_token,
+    issue_session,
+    normalize_email,
+    revoke_api_key,
+    revoke_session,
+    session_token,
+    verify_password,
+)
 from .db import create_session_factory, session_dependency
-from .models import Job, Organization, Project, ProjectLayout, ProjectSettings, ProjectVersion, Trace
+from .models import AuthSession, Job, Membership, Organization, Project, ProjectLayout, ProjectSettings, ProjectVersion, Trace, User, utc_now
 from .project_serializers import (
     GraphValidationError,
     serialize_layout,
@@ -30,6 +47,7 @@ from .project_serializers import (
     validate_graph,
 )
 from .schemas import IngestionResponse, OTLPExportRequest
+from .trace_serializers import decode_cursor, encode_cursor, serialize_trace, serialize_trace_detail, trace_metrics
 from services.worker.queue import SQSQueuePublisher
 
 try:
@@ -42,6 +60,7 @@ MAX_EVAL_CASES = 1_000
 MAX_EVAL_GRADERS = 64
 MAX_CONFIG_CANDIDATES = 256
 MAX_CONFIG_BYTES = 256 * 1024
+MAX_TRACE_PAGE_SIZE = 100
 DEFAULT_APP_ORIGIN = "https://2syexxoronpapxxxhzu6grgi4a0limkr.lambda-url.us-east-1.on.aws"
 CONTENT_KEY = re.compile(r"(?:^|[._-])(prompt|input|completion|output|content|message|messages|secret|password|authorization|api[-_]?key)(?:$|[._-])", re.I)
 REDACTED = "[REDACTED]"
@@ -166,9 +185,51 @@ class EvalCreate(BaseModel):
     graders: list[dict[str, Any]] = Field(default_factory=list, max_length=MAX_EVAL_GRADERS)
 
 
+class EvalSuiteCreate(BaseModel):
+    """Canonical project-scoped evaluation suite input."""
+
+    name: str = Field(min_length=1, max_length=255)
+    cases: list[dict[str, Any]] = Field(default_factory=list, max_length=MAX_EVAL_CASES)
+    graders: list[dict[str, Any]] = Field(default_factory=list, max_length=MAX_EVAL_GRADERS)
+    metadata: dict[str, Any] = Field(default_factory=dict, max_length=64)
+
+    @field_validator("name")
+    @classmethod
+    def normalized_name(cls, value: str) -> str:
+        name = value.strip()
+        if not name:
+            raise ValueError("name must not be blank")
+        return name
+
+
+class EvalRunCreate(BaseModel):
+    """Start one evaluation against a persisted suite snapshot."""
+
+    model_config = {"populate_by_name": True}
+
+    project_version_id: str | None = Field(default=None, alias="projectVersionId", max_length=255)
+    candidate_config: dict[str, Any] = Field(default_factory=dict, alias="candidateConfig")
+    sample_count: int | None = Field(default=None, alias="sampleCount", ge=1, le=MAX_EVAL_CASES)
+
+    @field_validator("candidate_config")
+    @classmethod
+    def bounded_candidate_config(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if len(json.dumps(value, default=str)) > MAX_CONFIG_BYTES:
+            raise ValueError("candidateConfig exceeds the maximum size")
+        return value
+
+
 class RunCreate(BaseModel):
+    model_config = {"populate_by_name": True}
+
     project_id: str | None = Field(default=None, max_length=255)
     dataset_id: str | None = Field(default=None, max_length=255)
+    project_version_id: str | None = Field(default=None, alias="projectVersionId", max_length=255)
+    idempotency_key: str | None = Field(default=None, alias="idempotencyKey", min_length=1, max_length=255)
+    objective: str | None = Field(default=None, max_length=64)
+    quality_tolerance_pp: float | None = Field(default=None, alias="qualityTolerancePp", ge=0, le=100)
+    confidence_pct: float | None = Field(default=None, alias="confidencePct", ge=0, le=100)
+    allowed_models: list[str] = Field(default_factory=list, alias="allowedModels", max_length=256)
     config: dict[str, Any] = Field(default_factory=dict)
     max_experiment_cost_usd: float = Field(default=25.0, gt=0, le=100000)
 
@@ -186,6 +247,52 @@ class RunCreate(BaseModel):
 class RunResponse(BaseModel):
     run_id: str
     status: str
+
+
+class AuthSignup(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=8, max_length=256)
+
+    @field_validator("email")
+    @classmethod
+    def valid_email(cls, value: str) -> str:
+        normalized = normalize_email(value)
+        if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", normalized):
+            raise ValueError("email must be valid")
+        return normalized
+
+    @field_validator("name")
+    @classmethod
+    def non_blank_name(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("name must not be blank")
+        return value.strip()
+
+
+class AuthSignin(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=1, max_length=256)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_login_email(cls, value: str) -> str:
+        return normalize_email(value)
+
+
+class AuthProfilePatch(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+
+    @field_validator("name")
+    @classmethod
+    def non_blank_name(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("name must not be blank")
+        return value.strip()
+
+
+def _user_payload(user: User) -> dict[str, Any]:
+    return {"id": user.id, "name": user.name, "email": user.email}
 
 
 def _nanos_to_datetime(value: int | str | None) -> datetime | None:
@@ -301,9 +408,9 @@ def _case_values(case: dict[str, Any], index: int) -> dict[str, Any]:
     return {"case_id": str(case.get("case_id", case.get("id", index))), "input_data": case.get("input_data", case.get("input", case.get("prompt", {}))), "expected": case.get("expected", case.get("output", case.get("answer", {}))), "metadata_json": case.get("metadata_json", case.get("metadata", {})), "ordinal": index}
 
 
-def _create_dataset(body: EvalCreate, *, tenant: Tenant, project: Project, session: Session) -> dict[str, Any]:
+def _create_dataset(body: EvalCreate, *, tenant: Tenant, project: Project, session: Session, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
     dataset_cls, case_cls, grader_cls = _model("EvalDataset"), _model("EvalCase"), _model("EvalGrader")
-    dataset = dataset_cls(organization_id=tenant.organization_id, project_id=project.id, name=body.name, version=1, metadata_json={})
+    dataset = dataset_cls(organization_id=tenant.organization_id, project_id=project.id, name=body.name, version=1, metadata_json=metadata or {})
     session.add(dataset)
     session.flush()
     for index, case in enumerate(body.cases):
@@ -399,8 +506,84 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
         except Exception as exc: raise HTTPException(status_code=503, detail="database is not ready") from exc
         return {"status": "ready"}
 
+    def get_user(
+        request: Request,
+        session: Session = Depends(get_session),
+        authorization: str | None = Header(default=None),
+    ) -> User:
+        return authenticate_user(request, session, authorization)
+
+    def auth_result(user: User, raw_token: str, expires_in: int) -> dict[str, Any]:
+        return {"user": _user_payload(user), "accessToken": raw_token, "tokenType": "Bearer", "expiresIn": expires_in}
+
+    @app.post("/v1/auth/signup", status_code=201, tags=["auth"])
+    def signup(body: AuthSignup, session: Session = Depends(get_session)) -> dict[str, Any]:
+        email = normalize_email(body.email)
+        if session.scalar(select(User).where(User.email == email)) is not None:
+            raise HTTPException(status_code=409, detail="Unable to create account with those details")
+        user = User(email=email, name=body.name.strip(), password_hash=hash_password(body.password))
+        organization = Organization(name=f"{body.name.strip()}'s Workspace")
+        session.add_all([user, organization])
+        session.flush()
+        session.add(Membership(user_id=user.id, organization_id=organization.id, role="owner"))
+        raw_token, auth_session = issue_session(user_id=user.id)
+        session.add(auth_session)
+        try:
+            session.commit()
+        except IntegrityError as exc:
+            session.rollback()
+            raise HTTPException(status_code=409, detail="Unable to create account with those details") from exc
+        return auth_result(user, raw_token, 60 * 60 * 24 * 30)
+
+    @app.post("/v1/auth/signin", tags=["auth"])
+    def signin(body: AuthSignin, session: Session = Depends(get_session)) -> dict[str, Any]:
+        user = session.scalar(select(User).where(User.email == normalize_email(body.email)))
+        if user is None or user.disabled_at is not None or not verify_password(user.password_hash, body.password):
+            raise HTTPException(status_code=401, detail="Invalid email or password", headers={"WWW-Authenticate": "Bearer"})
+        user.last_login_at = utc_now()
+        raw_token, auth_session = issue_session(user_id=user.id)
+        session.add(auth_session)
+        session.commit()
+        return auth_result(user, raw_token, 60 * 60 * 24 * 30)
+
+    @app.post("/v1/auth/refresh", tags=["auth"])
+    def refresh(
+        request: Request,
+        session: Session = Depends(get_session),
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        user = authenticate_user(request, session, authorization)
+        raw_old = session_token(authorization)
+        if raw_old is None:
+            raise HTTPException(status_code=401, detail="Authentication required", headers={"WWW-Authenticate": "Bearer"})
+        revoke_session(raw_old, session)
+        raw_token, auth_session = issue_session(user_id=user.id)
+        session.add(auth_session)
+        session.commit()
+        return auth_result(user, raw_token, 60 * 60 * 24 * 30)
+
+    @app.post("/v1/auth/logout", status_code=204, tags=["auth"])
+    def logout(
+        request: Request,
+        session: Session = Depends(get_session),
+        authorization: str | None = Header(default=None),
+    ) -> Response:
+        user = authenticate_user(request, session, authorization)
+        del user  # Authentication is intentionally required even for revocation.
+        raw_token = session_token(authorization)
+        if raw_token is not None:
+            revoke_session(raw_token, session)
+            session.commit()
+        return Response(status_code=204)
+
     @app.get("/v1/me", tags=["auth"])
     def current_identity(tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        if tenant.api_key_id.startswith("session:"):
+            user = session.get(User, tenant.api_key_id.removeprefix("session:"))
+            if user is None:
+                raise HTTPException(status_code=401, detail="Authentication required")
+            membership = session.scalar(select(Membership).where(Membership.user_id == user.id).order_by(Membership.created_at))
+            return {"id": user.id, "user": _user_payload(user), "organizationId": membership.organization_id if membership else None, "authType": "session"}
         organization = session.get(Organization, tenant.organization_id)
         if organization is None:
             raise HTTPException(status_code=401, detail="Organization no longer exists")
@@ -416,6 +599,90 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
             "authType": "demo" if tenant.api_key_id.startswith("demo:") else "api_key",
         }
         return result
+
+    @app.patch("/v1/me", tags=["auth"])
+    def update_identity(body: AuthProfilePatch, user: User = Depends(get_user), session: Session = Depends(get_session)) -> dict[str, Any]:
+        user.name = body.name.strip()
+        session.commit()
+        return {"user": _user_payload(user)}
+
+    @app.get("/v1/system/overview", tags=["system"])
+    def system_overview(tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        """Return a tenant-scoped, authenticated view of backend capabilities.
+
+        This endpoint is intentionally metadata-only. It helps the B2B studio
+        and deployment smoke tests understand what the connected control plane
+        can do without exposing provider credentials, prompts, completions, or
+        other infrastructure secrets. Counts are queried from the database on
+        every request, so this response is not a cached health claim.
+        """
+        organization = session.get(Organization, tenant.organization_id)
+        if organization is None:
+            raise HTTPException(status_code=401, detail="Organization no longer exists")
+
+        project_query = select(Project).where(Project.organization_id == tenant.organization_id)
+        if tenant.project_id:
+            project_query = project_query.where(Project.id == tenant.project_id)
+        projects = list(session.scalars(project_query.order_by(Project.created_at)).all())
+        project_ids = [project.id for project in projects]
+
+        trace_count = 0
+        version_count = 0
+        if project_ids:
+            trace_count = int(
+                session.scalar(
+                    select(func.count(Trace.id)).where(
+                        Trace.organization_id == tenant.organization_id,
+                        Trace.project_id.in_(project_ids),
+                    )
+                )
+                or 0
+            )
+            version_count = int(
+                session.scalar(
+                    select(func.count(ProjectVersion.id)).where(
+                        ProjectVersion.organization_id == tenant.organization_id,
+                        ProjectVersion.project_id.in_(project_ids),
+                    )
+                )
+                or 0
+            )
+
+        return {
+            "service": {
+                "name": app.title,
+                "version": app.version,
+                "environment": os.getenv("ENVIRONMENT") or os.getenv("APP_ENV", "development"),
+            },
+            "scope": {
+                "organizationId": organization.id,
+                "projectId": tenant.project_id,
+            },
+            "organization": {"id": organization.id, "name": organization.name},
+            "summary": {
+                "projectCount": len(projects),
+                "versionCount": version_count,
+                "traceCount": trace_count,
+            },
+            "projects": [
+                {"id": project.id, "name": project.name, "slug": project.slug}
+                for project in projects
+            ],
+            "capabilities": {
+                "otlpIngestion": True,
+                "profiling": True,
+                "evaluations": True,
+                "optimization": True,
+                "recommendationExport": True,
+                "promptOutputStorage": False,
+                "demoAuth": _demo_enabled(),
+            },
+            "dependencies": {
+                "database": "ready",
+                "queuePublisherConfigured": app.state.queue_publisher is not None,
+            },
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+        }
 
     @app.post("/v1/auth/demo", tags=["auth"])
     def demo_sign_in() -> dict[str, Any]:
@@ -488,6 +755,143 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
             "nextAction": next_action,
             "counts": {"versions": int(bool(version)), "traces": trace_count, "evalSuites": eval_count, "baselineRuns": baseline_count},
         }
+
+    def _serialize_eval_suite(dataset: Any, *, include_cases: bool = False) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "id": dataset.id,
+            "projectId": dataset.project_id,
+            "organizationId": dataset.organization_id,
+            "name": dataset.name,
+            "version": dataset.version,
+            "metadata": dataset.metadata_json or {},
+            "caseCount": len(dataset.cases),
+            "graderCount": len(dataset.graders),
+            "createdAt": dataset.created_at.isoformat(),
+            "updatedAt": dataset.updated_at.isoformat(),
+        }
+        if include_cases:
+            include_content = os.getenv("AGENTPGO_STORE_CONTENT", "").lower() in {"1", "true", "yes"}
+            result["cases"] = [
+                {
+                    "id": case.case_id,
+                    "metadata": case.metadata_json or {},
+                    **({"input": case.input_data, "expected": case.expected} if include_content else {}),
+                }
+                for case in dataset.cases
+            ]
+            result["graders"] = [{"name": grader.name, "kind": grader.kind, "config": grader.config} for grader in dataset.graders]
+        return result
+
+    def _eval_suite_for_tenant(suite_id: str, *, tenant: Tenant, session: Session) -> Any:
+        dataset_cls = _model("EvalDataset")
+        dataset = session.scalar(select(dataset_cls).where(dataset_cls.id == suite_id, dataset_cls.organization_id == tenant.organization_id))
+        if dataset is None or (tenant.project_id and dataset.project_id != tenant.project_id):
+            raise HTTPException(status_code=404, detail="Evaluation suite not found")
+        return dataset
+
+    def _eval_run_for_tenant(run_id: str, *, tenant: Tenant, session: Session) -> Any:
+        run_cls = _model("EvalRun")
+        run = session.scalar(select(run_cls).where(run_cls.id == run_id, run_cls.organization_id == tenant.organization_id))
+        if run is None or (tenant.project_id and run.project_id != tenant.project_id):
+            raise HTTPException(status_code=404, detail="Evaluation run not found")
+        return run
+
+    def _serialize_eval_run(run: Any) -> dict[str, Any]:
+        return {
+            "runId": run.id,
+            "projectId": run.project_id,
+            "evalSuiteId": run.eval_suite_id,
+            "projectVersionId": run.project_version_id,
+            "status": str(run.status or "queued").upper(),
+            "candidateConfig": run.candidate_config or {},
+            "graderSnapshot": run.grader_snapshot or [],
+            "metrics": run.aggregate_metrics or {},
+            "caseCount": len(run.cases),
+            "completedCaseCount": sum(1 for case in run.cases if str(case.status).lower() in {"completed", "passed", "failed"}),
+            "error": run.error,
+            "createdAt": run.created_at.isoformat(),
+            "updatedAt": run.updated_at.isoformat(),
+            "startedAt": run.started_at.isoformat() if run.started_at else None,
+            "completedAt": run.completed_at.isoformat() if run.completed_at else None,
+        }
+
+    @app.get("/v1/projects/{project_id}/eval-suites", response_model=dict[str, Any], tags=["evals"])
+    def list_eval_suites(project_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        project = _project_reference(project_id, tenant=tenant, session=session)
+        dataset_cls = _model("EvalDataset")
+        suites = session.scalars(select(dataset_cls).where(dataset_cls.project_id == project.id, dataset_cls.organization_id == tenant.organization_id).order_by(desc(dataset_cls.created_at))).all()
+        return {"data": [_serialize_eval_suite(suite) for suite in suites], "page": {"nextCursor": None}}
+
+    @app.post("/v1/projects/{project_id}/eval-suites", response_model=dict[str, Any], status_code=201, tags=["evals"])
+    def create_eval_suite(project_id: str, body: EvalSuiteCreate, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        project = _project_reference(project_id, tenant=tenant, session=session)
+        dataset = _create_dataset(EvalCreate(name=body.name, cases=body.cases, graders=body.graders), tenant=tenant, project=project, session=session, metadata=body.metadata)
+        return _serialize_eval_suite(session.get(_model("EvalDataset"), dataset["id"]), include_cases=True)
+
+    @app.get("/v1/eval-suites/{suite_id}", response_model=dict[str, Any], tags=["evals"])
+    def eval_suite_detail(suite_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        return _serialize_eval_suite(_eval_suite_for_tenant(suite_id, tenant=tenant, session=session), include_cases=True)
+
+    @app.post("/v1/eval-suites/{suite_id}/runs", response_model=dict[str, Any], status_code=202, tags=["evals"])
+    def start_eval_run(suite_id: str, body: EvalRunCreate, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        dataset = _eval_suite_for_tenant(suite_id, tenant=tenant, session=session)
+        project = _project_reference(str(dataset.project_id), tenant=tenant, session=session)
+        version = None
+        if body.project_version_id:
+            version = session.scalar(select(ProjectVersion).where(ProjectVersion.id == body.project_version_id, ProjectVersion.project_id == project.id, ProjectVersion.organization_id == tenant.organization_id))
+            if version is None:
+                raise HTTPException(status_code=404, detail="Project version not found")
+        selected_cases = list(dataset.cases[: body.sample_count] if body.sample_count else dataset.cases)
+        if not selected_cases:
+            raise HTTPException(status_code=422, detail="Evaluation suite must contain at least one case")
+        run_cls, case_cls = _model("EvalRun"), _model("EvalRunCase")
+        run_id = str(uuid4())
+        grader_snapshot = [{"name": grader.name, "kind": grader.kind, "config": grader.config} for grader in dataset.graders]
+        run = run_cls(id=run_id, organization_id=tenant.organization_id, project_id=project.id, eval_suite_id=dataset.id, project_version_id=version.id if version else None, status="queued", candidate_config=body.candidate_config, grader_snapshot=grader_snapshot)
+        run.cases = [case_cls(case_id=case.case_id, ordinal=index) for index, case in enumerate(selected_cases)]
+        session.add(run)
+        # Keep both names while workers migrate: eval_suite_id is canonical,
+        # dataset_id is the existing optimizer/evaluator linkage.
+        job_payload = {"job_id": run_id, "kind": "evaluation", "organization_id": tenant.organization_id, "project_id": project.id, "eval_run_id": run_id, "eval_suite_id": dataset.id, "dataset_id": dataset.id, "config": {"dataset_id": dataset.id, "eval_suite_id": dataset.id, **body.candidate_config}}
+        session.add(Job(id=run_id, organization_id=tenant.organization_id, project_id=project.id, kind="evaluation", payload=job_payload))
+        _record_outbox(session, tenant, "eval_run", run_id, "eval_run.queued", {"job_id": run_id, "eval_suite_id": dataset.id})
+        session.commit()
+        if app.state.queue_publisher is not None:
+            app.state.queue_publisher.publish(run_id, {"kind": "evaluation"})
+        session.refresh(run)
+        return _serialize_eval_run(run)
+
+    @app.get("/v1/eval-runs/{run_id}", response_model=dict[str, Any], tags=["evals"])
+    def eval_run_status(run_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        return _serialize_eval_run(_eval_run_for_tenant(run_id, tenant=tenant, session=session))
+
+    @app.get("/v1/eval-runs/{run_id}/cases", response_model=dict[str, Any], tags=["evals"])
+    def eval_run_cases(run_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session), limit: int = Query(default=100, ge=1, le=1000)) -> dict[str, Any]:
+        run_cls = _model("EvalRun")
+        run = session.scalar(select(run_cls).where(run_cls.id == run_id, run_cls.organization_id == tenant.organization_id))
+        if run is not None and (not tenant.project_id or run.project_id == tenant.project_id):
+            rows = list(run.cases)[:limit]
+            cases = []
+            for case in rows:
+                evidence = case.evidence if isinstance(case.evidence, dict) else {}
+                cases.append({"id": case.id, "caseId": case.case_id, "ordinal": case.ordinal, "status": str(case.status).upper(), "passed": case.passed, "score": case.score, "latencyMs": case.latency_ms, "evidence": evidence, "baselineScore": evidence.get("baselineScore"), "optimizedScore": evidence.get("optimizedScore"), "baselineLatencyMs": evidence.get("baselineLatencyMs"), "optimizedLatencyMs": evidence.get("optimizedLatencyMs")})
+        else:
+            # Compatibility for the earlier optimization-run case view.  It
+            # shares this URL, so retain its persisted dataset projection
+            # while canonical EvalRun records use the normalized rows above.
+            legacy = _run_for_tenant(run_id, "optimization", tenant, session)
+            dataset_id = (legacy.get("config") or {}).get("dataset_id") or (legacy.get("config") or {}).get("datasetId")
+            if not dataset_id:
+                return {"data": [], "cases": [], "page": {"nextCursor": None}}
+            dataset = _dataset_for_request(str(dataset_id), tenant=tenant, project=session.get(Project, legacy["project_id"]), session=session)
+            cases = []
+            for case in list(dataset.cases)[:limit]:
+                metadata = case.metadata_json if isinstance(case.metadata_json, dict) else {}
+                prompt = case.input_data if os.getenv("AGENTPGO_STORE_CONTENT", "").lower() in {"1", "true", "yes"} else None
+                cases.append({"id": case.case_id, "category": str(metadata.get("category", "default")), "prompt": prompt, "baselineScore": float(metadata.get("baselineScore", 0)), "optimizedScore": float(metadata.get("optimizedScore", 0)), "baselineLatencyMs": float(metadata.get("baselineLatencyMs", 0)), "optimizedLatencyMs": float(metadata.get("optimizedLatencyMs", 0)), "status": str(metadata.get("status", "PASS")).upper(), "passed": bool(metadata.get("passed", True)), "diffNote": str(metadata.get("diffNote", ""))})
+        # Keep `cases` for the current studio client and `data` for the
+        # canonical collection envelope.
+        return {"data": cases, "cases": cases, "page": {"nextCursor": None}}
 
     @app.post("/v1/projects/{project_id}/api-keys", status_code=201, tags=["auth"])
     def create_project_api_key(project_id: str, body: ProjectApiKeyCreate, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
@@ -723,10 +1127,79 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
     def project_profile(project_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
         project = _project_reference(project_id, tenant=tenant, session=session)
         rows = list(session.scalars(select(Trace).where(Trace.project_id == project.id)).all())
-        latencies = [max(0.0, (r.end_time - r.start_time).total_seconds() * 1000) for r in rows if r.start_time and r.end_time]
+        measurements = [trace_metrics(row) for row in rows]
+        latencies = [float(item["durationMs"]) for item in measurements if item["startedAt"] and item["endedAt"]]
         p95 = quantiles(latencies, n=20, method="inclusive")[18] if len(latencies) >= 2 else (latencies[0] if latencies else 0.0)
         p50 = quantiles(latencies, n=2, method="inclusive")[0] if len(latencies) >= 2 else (latencies[0] if latencies else 0.0)
-        return {"project_id": project.id, "runs_observed": len({r.trace_id for r in rows}), "model_calls": len(rows), "p50_latency_ms": p50, "p95_latency_ms": p95, "spans": len(rows)}
+        traces_observed = len({item["traceId"] for item in measurements})
+        total_cost = sum(float(item["cost"]) for item in measurements)
+        total_input = sum(int(item["inputTokens"]) for item in measurements)
+        total_output = sum(int(item["outputTokens"]) for item in measurements)
+        error_count = sum(item["status"] == "error" for item in measurements)
+        by_node: dict[str, dict[str, Any]] = {}
+        by_model: dict[str, dict[str, Any]] = {}
+        for item in measurements:
+            for key, target in ((item["nodeId"] or "unknown", by_node), (item["model"] or "unknown", by_model)):
+                bucket = target.setdefault(key, {"calls": 0, "inputTokens": 0, "outputTokens": 0, "cost": 0.0, "latencyMs": 0.0, "errorCount": 0})
+                bucket["calls"] += 1
+                bucket["inputTokens"] += item["inputTokens"]
+                bucket["outputTokens"] += item["outputTokens"]
+                bucket["cost"] += item["cost"]
+                bucket["latencyMs"] += item["durationMs"]
+                bucket["errorCount"] += item["status"] == "error"
+        for bucket in (*by_node.values(), *by_model.values()):
+            bucket["avgLatencyMs"] = bucket["latencyMs"] / bucket["calls"] if bucket["calls"] else 0.0
+        return {
+            "project_id": project.id,
+            "runs_observed": traces_observed,
+            "model_calls": len(rows),
+            "p50_latency_ms": p50,
+            "p95_latency_ms": p95,
+            "spans": len(rows),
+            "avg_latency_ms": sum(latencies) / len(latencies) if latencies else 0.0,
+            "input_tokens": total_input,
+            "output_tokens": total_output,
+            "total_tokens": total_input + total_output,
+            "total_cost_usd": total_cost,
+            "cost_per_request_usd": total_cost / traces_observed if traces_observed else 0.0,
+            "avg_cost_per_call_usd": total_cost / len(rows) if rows else 0.0,
+            "error_count": error_count,
+            "error_rate_pct": error_count / len(rows) * 100 if rows else 0.0,
+            "by_node": by_node,
+            "by_model": by_model,
+        }
+
+    @app.get("/v1/projects/{project_id}/traces", response_model=dict[str, Any], tags=["traces"])
+    def list_project_traces(
+        project_id: str,
+        cursor: str | None = Query(default=None, max_length=512),
+        limit: int = Query(default=50, ge=1, le=MAX_TRACE_PAGE_SIZE),
+        tenant: Tenant = Depends(get_tenant),
+        session: Session = Depends(get_session),
+    ) -> dict[str, Any]:
+        project = _project_reference(project_id, tenant=tenant, session=session)
+        query = select(Trace).where(Trace.project_id == project.id, Trace.organization_id == tenant.organization_id)
+        if cursor:
+            try:
+                received_at, row_id = decode_cursor(cursor)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail="Invalid trace cursor") from exc
+            query = query.where(
+                or_(Trace.received_at < received_at, and_(Trace.received_at == received_at, Trace.id < row_id))
+            )
+        rows = list(session.scalars(query.order_by(desc(Trace.received_at), desc(Trace.id)).limit(limit + 1)).all())
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        next_cursor = encode_cursor(rows[-1].received_at, rows[-1].id) if has_more and rows else None
+        return {"data": [serialize_trace(row) for row in rows], "page": {"nextCursor": next_cursor}}
+
+    @app.get("/v1/projects/{project_id}/traces/{trace_id}", response_model=dict[str, Any], tags=["traces"])
+    def get_project_trace(trace_id: str, project_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        project = _project_reference(project_id, tenant=tenant, session=session)
+        rows = list(session.scalars(select(Trace).where(Trace.project_id == project.id, Trace.organization_id == tenant.organization_id, Trace.trace_id == trace_id.lower()).order_by(Trace.start_time, Trace.id)).all())
+        if not rows:
+            raise HTTPException(status_code=404, detail="Trace not found")
+        return serialize_trace_detail(rows[0].trace_id, rows, project.id)
 
     @app.post("/v1/profiles", response_model=dict[str, Any], status_code=202, tags=["profile"])
     def queue_profile(payload: dict[str, Any], request: Request, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
@@ -767,18 +1240,142 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
         current = len(dataset.cases); [session.add(case_cls(dataset_id=dataset.id, **_case_values(case, current + i))) for i, case in enumerate(cases)]
         dataset.version += 1; session.commit(); return {"id": dataset.id, "case_count": current + len(cases), "version": dataset.version}
 
+    def _version_for_run(project: Project, reference: str | None, tenant: Tenant, session: Session) -> ProjectVersion | None:
+        if not reference or reference == "latest":
+            return _latest_version(project, session)
+        version = session.scalar(select(ProjectVersion).where(
+            ProjectVersion.organization_id == tenant.organization_id,
+            ProjectVersion.project_id == project.id,
+            or_(ProjectVersion.id == reference, ProjectVersion.version == reference),
+        ))
+        if version is None:
+            raise HTTPException(status_code=404, detail="Project version not found")
+        return version
+
+    def _append_optimization_event(
+        run_id: str,
+        tenant: Tenant,
+        project_id: str | None,
+        event_type: str,
+        payload: dict[str, Any],
+        session: Session,
+        *,
+        event_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Append one replayable event; event IDs make retries harmless."""
+        event_cls = getattr(api_models, "OptimizationEvent", None)
+        if event_cls is None:
+            return None
+        stable_id = event_id or f"{run_id}:{uuid4().hex}"
+        existing = session.scalar(select(event_cls).where(event_cls.job_id == run_id, event_cls.event_id == stable_id))
+        if existing is not None:
+            return {"id": existing.event_id, "sequence": existing.sequence, **(existing.payload or {})}
+        max_sequence = session.scalar(select(func.max(event_cls.sequence)).where(event_cls.job_id == run_id))
+        sequence = int(max_sequence or 0) + 1
+        event = event_cls(
+            organization_id=tenant.organization_id, project_id=project_id, job_id=run_id,
+            sequence=sequence, event_id=stable_id, event_type=event_type.upper(), payload=dict(payload),
+        )
+        session.add(event)
+        session.commit()
+        return {"id": stable_id, "sequence": sequence, "type": event_type.upper(), "timestamp": event.created_at.isoformat(), **payload}
+
+    def _run_payload(job: Job, *, include_events: bool = False) -> dict[str, Any]:
+        payload = job.payload if isinstance(job.payload, dict) else {}
+        result: dict[str, Any] = {
+            "runId": job.id, "run_id": job.id, "organizationId": job.organization_id,
+            "projectId": job.project_id, "kind": job.kind, "status": str(job.status).upper(),
+            "projectVersionId": job.project_version_id or payload.get("project_version_id"),
+            "datasetId": job.dataset_id or payload.get("dataset_id"),
+            "evalSuiteId": job.dataset_id or payload.get("dataset_id"),
+            "config": payload.get("config", {}), "candidates": payload.get("candidates", []),
+            "maxExperimentCostUsd": job.max_experiment_cost_usd,
+            "spentUsd": job.spent_usd, "objective": job.objective,
+            "qualityTolerancePp": float(job.quality_tolerance_pp) if job.quality_tolerance_pp is not None else None,
+            "confidencePct": float(job.confidence_pct) if job.confidence_pct is not None else None,
+            "allowedModels": list(job.allowed_models or []), "cancelRequested": job.cancel_requested_at is not None,
+            "result": job.result, "error": job.error,
+            "createdAt": job.created_at.isoformat(), "updatedAt": job.updated_at.isoformat(),
+            "startedAt": job.started_at.isoformat() if job.started_at else None,
+            "completedAt": job.completed_at.isoformat() if job.completed_at else None,
+        }
+        if include_events:
+            result["events"] = [
+                {"id": event.event_id, "sequence": event.sequence, "type": event.event_type, "timestamp": event.created_at.isoformat(), **(event.payload or {})}
+                for event in (job.optimization_events or [])
+            ]
+        return result
+
     def _queue_run(kind: str, body: RunCreate, request: Request, tenant: Tenant, session: Session) -> RunResponse:
         project = _project_for_request(request=request, project_id=body.project_id, tenant=tenant, session=session)
         if body.dataset_id: _dataset_for_request(body.dataset_id, tenant=tenant, project=project, session=session)
+        version = _version_for_run(project, body.project_version_id, tenant, session)
         run_id = str(uuid4()); config = dict(body.config); config["max_experiment_cost_usd"] = body.max_experiment_cost_usd
+        # Canonicalize the suite linkage inside config as well as the legacy
+        # top-level payload field.  Consumers of the old browser route read
+        # config.dataset_id, while workers read the top-level dataset_id.
+        if body.dataset_id:
+            config["dataset_id"] = body.dataset_id
+        config["project_version_id"] = version.id if version else None
         payload_data = {"job_id": run_id, "kind": kind, "organization_id": tenant.organization_id, "project_id": project.id, "dataset_id": body.dataset_id, "config": config}
         if JobPayload is not None:
             try: payload = JobPayload.model_validate(payload_data).to_wire()
             except Exception as exc: raise HTTPException(status_code=422, detail=f"invalid run config: {exc}") from exc
         else: payload = {**payload_data, "candidates": config.get("candidates", [])}
-        job = Job(id=run_id, organization_id=tenant.organization_id, project_id=project.id, kind=kind, payload=payload, max_experiment_cost_usd=body.max_experiment_cost_usd)
-        session.add(job); _record_outbox(session, tenant, kind, run_id, f"{kind}.queued", {"job_id": run_id}); session.commit()
+        job = Job(
+            id=run_id, organization_id=tenant.organization_id, project_id=project.id, kind=kind,
+            payload=payload, max_experiment_cost_usd=body.max_experiment_cost_usd,
+            project_version_id=version.id if version else None, dataset_id=body.dataset_id,
+            idempotency_key=body.idempotency_key, objective=body.objective,
+            quality_tolerance_pp=body.quality_tolerance_pp, confidence_pct=body.confidence_pct,
+            allowed_models=list(body.allowed_models or []),
+        )
+        idem_cls = getattr(api_models, "OptimizationIdempotency", None)
+        request_hash = hashlib.sha256(json.dumps({
+            "kind": kind, "projectId": project.id, "projectVersionId": version.id if version else None,
+            "datasetId": body.dataset_id, "objective": body.objective,
+            "qualityTolerancePp": body.quality_tolerance_pp, "confidencePct": body.confidence_pct,
+            "allowedModels": body.allowed_models, "config": config,
+            "maxExperimentCostUsd": body.max_experiment_cost_usd,
+        }, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
+        if idem_cls is not None and body.idempotency_key:
+            existing = session.scalar(select(idem_cls).where(
+                idem_cls.organization_id == tenant.organization_id,
+                idem_cls.operation == kind,
+                idem_cls.idempotency_key == body.idempotency_key,
+            ))
+            if existing is not None:
+                if existing.request_hash != request_hash:
+                    raise HTTPException(status_code=409, detail="Idempotency key was already used with a different request")
+                existing_job = session.get(Job, existing.job_id)
+                if existing_job is not None:
+                    return RunResponse(run_id=existing_job.id, status=existing_job.status)
+        session.add(job)
+        if idem_cls is not None and body.idempotency_key:
+            session.add(idem_cls(
+                organization_id=tenant.organization_id, project_id=project.id, operation=kind,
+                idempotency_key=body.idempotency_key, request_hash=request_hash, job_id=run_id,
+            ))
+        _record_outbox(session, tenant, kind, run_id, f"{kind}.queued", {"job_id": run_id})
+        try:
+            session.commit()
+        except IntegrityError as exc:
+            session.rollback()
+            if idem_cls is not None and body.idempotency_key:
+                existing = session.scalar(select(idem_cls).where(
+                    idem_cls.organization_id == tenant.organization_id,
+                    idem_cls.operation == kind,
+                    idem_cls.idempotency_key == body.idempotency_key,
+                ))
+                if existing is not None:
+                    if existing.request_hash != request_hash:
+                        raise HTTPException(status_code=409, detail="Idempotency key was already used with a different request") from exc
+                    existing_job = session.get(Job, existing.job_id)
+                    if existing_job is not None:
+                        return RunResponse(run_id=existing_job.id, status=existing_job.status)
+            raise HTTPException(status_code=409, detail="Optimization request conflicts with an existing run") from exc
         if app.state.queue_publisher is not None: app.state.queue_publisher.publish(run_id, {"kind": kind})
+        _append_optimization_event(run_id, tenant, project.id, "INFO", {"message": f"{kind} queued", "status": "QUEUED"}, session)
         return RunResponse(run_id=run_id, status="queued")
 
     @app.post("/v1/baselines/run", response_model=RunResponse, status_code=202, tags=["baselines"])
@@ -801,7 +1398,18 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
         config = payload.get("config") if isinstance(payload.get("config"), dict) else dict(payload)
         config.pop("projectVersionId", None)
         config.pop("evalSuiteId", None)
-        body = RunCreate(project_id=project_id, dataset_id=payload.get("evalSuiteId") or payload.get("datasetId"), config=config, max_experiment_cost_usd=budget)
+        body = RunCreate(
+            project_id=project_id,
+            dataset_id=payload.get("evalSuiteId") or payload.get("datasetId"),
+            project_version_id=payload.get("projectVersionId") or payload.get("project_version_id"),
+            idempotency_key=payload.get("idempotencyKey") or payload.get("idempotency_key") or request.headers.get("Idempotency-Key"),
+            objective=str(payload.get("objective")) if payload.get("objective") is not None else None,
+            quality_tolerance_pp=payload.get("qualityTolerancePp", payload.get("quality_tolerance_pp")),
+            confidence_pct=payload.get("confidencePct", payload.get("confidence_pct")),
+            allowed_models=payload.get("allowedModels", payload.get("allowed_models", [])) or [],
+            config=config,
+            max_experiment_cost_usd=budget,
+        )
         result = _queue_run("optimization", body, request, tenant, session)
         return {"runId": result.run_id, "status": result.status, "createdAt": datetime.now(timezone.utc).isoformat()}
 
@@ -811,7 +1419,7 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
         job = session.scalar(query)
         if job is None: raise HTTPException(status_code=404, detail=f"{kind.title()} not found")
         payload = job.payload if isinstance(job.payload, dict) else {}
-        return {"run_id": job.id, "organization_id": job.organization_id, "project_id": job.project_id, "kind": job.kind, "status": job.status, "config": payload.get("config", {}), "candidates": payload.get("candidates", []), "max_experiment_cost_usd": job.max_experiment_cost_usd, "result": job.result, "error": job.error}
+        return _run_payload(job)
 
     @app.get("/v1/baselines/{run_id}", response_model=dict[str, Any], tags=["baselines"])
     def get_baseline(run_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)): return _run_for_tenant(run_id, "baseline", tenant, session)
@@ -949,5 +1557,5 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
 
 # Starlette imports this name at middleware execution time; keeping it local
 # avoids exposing a second HTTP framework dependency in the module API.
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, StreamingResponse
 app = create_app()

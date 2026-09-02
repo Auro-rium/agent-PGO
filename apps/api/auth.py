@@ -15,15 +15,26 @@ import math
 import os
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from time import time
 from typing import Any
 
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 from fastapi import Header, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import ApiKey
+from .models import ApiKey, AuthSession, Membership, User, utc_now
+
+
+_password_hasher = PasswordHasher()
+SESSION_PREFIX = "trw_session_"
+SESSION_TTL_SECONDS = 60 * 60 * 24 * 30
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
 def hash_api_key(secret: str) -> str:
@@ -39,6 +50,72 @@ def issue_api_key(*, organization_id: str, project_id: str | None = None, name: 
         key_prefix=secret[:12],
         key_hash=hash_api_key(secret),
     )
+
+
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def hash_password(password: str) -> str:
+    return _password_hasher.hash(password)
+
+
+def verify_password(password_hash: str, password: str) -> bool:
+    try:
+        return _password_hasher.verify(password_hash, password)
+    except (InvalidHashError, VerificationError, VerifyMismatchError):
+        return False
+
+
+def issue_session(*, user_id: str, expires_in_seconds: int = SESSION_TTL_SECONDS) -> tuple[str, AuthSession]:
+    if expires_in_seconds <= 0:
+        raise ValueError("expires_in_seconds must be positive")
+    raw = SESSION_PREFIX + secrets.token_urlsafe(48)
+    now = utc_now()
+    record = AuthSession(
+        user_id=user_id,
+        token_hash=hash_api_key(raw),
+        expires_at=now + timedelta(seconds=expires_in_seconds),
+        last_seen_at=now,
+    )
+    return raw, record
+
+
+def _session_record(token: str, session: Session) -> AuthSession | None:
+    return session.scalar(
+        select(AuthSession).where(
+            AuthSession.token_hash == hash_api_key(token),
+            AuthSession.revoked_at.is_(None),
+        )
+    )
+
+
+def session_token(authorization: str | None) -> str | None:
+    bearer = _is_bearer(authorization)
+    return bearer if bearer and bearer.startswith(SESSION_PREFIX) else None
+
+
+def revoke_session(token: str, session: Session) -> bool:
+    record = _session_record(token, session)
+    if record is None or record.revoked_at is not None:
+        return False
+    record.revoked_at = utc_now()
+    return True
+
+
+def authenticate_user(request: Request, session: Session, authorization: str | None = None) -> User:
+    bearer = _is_bearer(authorization or request.headers.get("authorization"))
+    if not bearer or not bearer.startswith(SESSION_PREFIX):
+        raise HTTPException(status_code=401, detail="Authentication required", headers={"WWW-Authenticate": "Bearer"})
+    record = _session_record(bearer, session)
+    now = utc_now()
+    if record is None or _as_utc(record.expires_at) <= now:
+        raise HTTPException(status_code=401, detail="Invalid or expired session", headers={"WWW-Authenticate": "Bearer"})
+    user = session.get(User, record.user_id)
+    if user is None or user.disabled_at is not None:
+        raise HTTPException(status_code=401, detail="Invalid or expired session", headers={"WWW-Authenticate": "Bearer"})
+    record.last_seen_at = now
+    return user
 
 
 @dataclass(frozen=True)
@@ -187,6 +264,18 @@ def authenticate(
     x_api_key: str | None = Header(default=None),
 ) -> Tenant:
     bearer = _is_bearer(authorization)
+    if bearer and bearer.startswith(SESSION_PREFIX):
+        record = _session_record(bearer, session)
+        if record is None or record.revoked_at is not None or _as_utc(record.expires_at) <= utc_now():
+            raise HTTPException(status_code=401, detail="Invalid or expired session", headers={"WWW-Authenticate": "Bearer"})
+        user = session.get(User, record.user_id)
+        if user is None or user.disabled_at is not None:
+            raise HTTPException(status_code=401, detail="Invalid or expired session", headers={"WWW-Authenticate": "Bearer"})
+        membership = session.scalar(select(Membership).where(Membership.user_id == user.id).order_by(Membership.created_at))
+        if membership is None:
+            raise HTTPException(status_code=403, detail="User has no organization membership")
+        record.last_seen_at = utc_now()
+        return Tenant(str(membership.organization_id), None, f"session:{user.id}")
     if bearer and bearer.startswith(f"{DEMO_TOKEN_PREFIX}."):
         # Demo auth is intentionally impossible to enable in production. A
         # signed token also cannot choose a different tenant than configured.

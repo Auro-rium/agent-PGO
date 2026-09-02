@@ -21,6 +21,50 @@ class Base(DeclarativeBase):
     pass
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(512), nullable=False)
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    memberships: Mapped[list[Membership]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    sessions: Mapped[list[AuthSession]] = relationship(back_populates="user", cascade="all, delete-orphan")
+
+
+class Membership(Base):
+    __tablename__ = "memberships"
+    __table_args__ = (UniqueConstraint("user_id", "organization_id", name="uq_memberships_user_organization"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(32), nullable=False, default="member")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    user: Mapped[User] = relationship(back_populates="memberships")
+    organization: Mapped[Organization] = relationship(back_populates="memberships")
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    user: Mapped[User] = relationship(back_populates="sessions")
+
+
 class Organization(Base):
     __tablename__ = "organizations"
 
@@ -34,6 +78,7 @@ class Organization(Base):
     projects: Mapped[list[Project]] = relationship(back_populates="organization", cascade="all, delete-orphan")
     api_keys: Mapped[list[ApiKey]] = relationship(back_populates="organization", cascade="all, delete-orphan")
     traces: Mapped[list[Trace]] = relationship(back_populates="organization", cascade="all, delete-orphan")
+    memberships: Mapped[list[Membership]] = relationship(back_populates="organization", cascade="all, delete-orphan")
 
 
 class Project(Base):
@@ -337,6 +382,14 @@ class Job(Base):
     )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    project_version_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("project_versions.id", ondelete="SET NULL"), nullable=True, index=True)
+    dataset_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("eval_datasets.id", ondelete="SET NULL"), nullable=True, index=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    objective: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    quality_tolerance_pp: Mapped[float | None] = mapped_column(Numeric(9, 4), nullable=True)
+    confidence_pct: Mapped[float | None] = mapped_column(Numeric(9, 4), nullable=True)
+    allowed_models: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     organization: Mapped[Organization] = relationship()
     project: Mapped[Project | None] = relationship()
@@ -345,6 +398,9 @@ class Job(Base):
     )
     optimization_result: Mapped[OptimizationResult | None] = relationship(
         back_populates="job", cascade="all, delete-orphan", uselist=False
+    )
+    optimization_events: Mapped[list[OptimizationEvent]] = relationship(
+        back_populates="job", cascade="all, delete-orphan", order_by="OptimizationEvent.sequence"
     )
 
 
@@ -374,6 +430,47 @@ class JobCandidateResult(Base):
     job: Mapped[Job] = relationship(back_populates="candidate_results")
 
 
+class OptimizationEvent(Base):
+    """Append-only, replayable event for an optimization run."""
+
+    __tablename__ = "optimization_events"
+    __table_args__ = (
+        UniqueConstraint("job_id", "sequence", name="uq_optimization_events_job_sequence"),
+        UniqueConstraint("job_id", "event_id", name="uq_optimization_events_job_event"),
+        Index("ix_optimization_events_job_created", "job_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
+    job_id: Mapped[str] = mapped_column(String(36), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False, default="INFO")
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    job: Mapped[Job] = relationship(back_populates="optimization_events")
+
+
+class OptimizationIdempotency(Base):
+    """Request key mapping for replay-safe optimization starts."""
+
+    __tablename__ = "optimization_idempotency"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "operation", "idempotency_key", name="uq_optimization_idempotency_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    operation: Mapped[str] = mapped_column(String(64), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    job_id: Mapped[str] = mapped_column(String(36), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
 
 # ``Job`` intentionally stores the wire field as ``status``; callers may use
 # ``state`` as the domain term without creating a second persisted column.
@@ -397,6 +494,7 @@ class EvalDataset(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
     cases: Mapped[list[EvalCase]] = relationship(back_populates="dataset", cascade="all, delete-orphan", order_by="EvalCase.ordinal")
     graders: Mapped[list[EvalGrader]] = relationship(back_populates="dataset", cascade="all, delete-orphan", order_by="EvalGrader.ordinal")
+    runs: Mapped[list[EvalRun]] = relationship(back_populates="dataset", cascade="all, delete-orphan")
 
 
 class EvalCase(Base):
@@ -432,6 +530,61 @@ class EvalGrader(Base):
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     dataset: Mapped[EvalDataset] = relationship(back_populates="graders")
+
+
+class EvalRun(Base):
+    """Durable execution of one immutable evaluation suite version."""
+
+    __tablename__ = "eval_runs"
+    __table_args__ = (
+        Index("ix_eval_runs_organization_created", "organization_id", "created_at"),
+        Index("ix_eval_runs_project_created", "project_id", "created_at"),
+        Index("ix_eval_runs_suite_created", "eval_suite_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    eval_suite_id: Mapped[str] = mapped_column(String(36), ForeignKey("eval_datasets.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_version_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("project_versions.id", ondelete="SET NULL"), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", index=True)
+    candidate_config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    grader_snapshot: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    aggregate_metrics: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    organization: Mapped[Organization] = relationship()
+    project: Mapped[Project] = relationship()
+    dataset: Mapped[EvalDataset] = relationship(back_populates="runs")
+    cases: Mapped[list[EvalRunCase]] = relationship(back_populates="run", cascade="all, delete-orphan", order_by="EvalRunCase.ordinal")
+
+
+class EvalRunCase(Base):
+    """Persisted per-case evidence for an evaluation run."""
+
+    __tablename__ = "eval_run_cases"
+    __table_args__ = (
+        UniqueConstraint("eval_run_id", "case_id", name="uq_eval_run_cases_run_case"),
+        Index("ix_eval_run_cases_run_ordinal", "eval_run_id", "ordinal"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    eval_run_id: Mapped[str] = mapped_column(String(36), ForeignKey("eval_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    case_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    passed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    evidence: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    run: Mapped[EvalRun] = relationship(back_populates="cases")
 
 
 class OutboxEvent(Base):
