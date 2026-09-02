@@ -8,6 +8,7 @@ WORKDIR /app
 COPY pyproject.toml requirements.txt ./
 RUN pip install --no-cache-dir \
     'alembic>=1.13' \
+    'argon2-cffi>=23.1' \
     'boto3>=1.35' \
     'fastapi>=0.115' \
     'pydantic>=2.7' \
