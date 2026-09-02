@@ -1,11 +1,32 @@
-import { AgentNode, AgentProject, CandidateSubstitution, EvalCase, OptimizationCandidate, OptimizerEvent, ProjectSetupState } from "../types";
+import { AgentNode, AgentProject, BaselineRun, CandidateSubstitution, EvalCase, EvalCaseInput, EvalGrader, EvalRun, EvalRunCase, EvalSuite, JsonObject, OptimizationCandidate, OptimizationRecommendation, OptimizationRun, OptimizerEvent, ProfileMetrics, ProfileRun, ProjectLayout, ProjectSettings, ProjectSetupState, TraceDetail, TraceSpan } from "../types";
 
 const value = (item: unknown, key: string, fallback: unknown = undefined): unknown => item && typeof item === "object" && key in item ? (item as Record<string, unknown>)[key] : fallback;
 const number = (item: unknown, keys: string[], fallback = 0) => {
   for (const key of keys) { const candidate = Number(value(item, key)); if (Number.isFinite(candidate)) return candidate; }
   return fallback;
 };
+const optionalNumber = (item: unknown, keys: string[]): number | undefined => {
+  const parsed = number(item, keys, NaN);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
 const text = (item: unknown, keys: string[], fallback = "") => { for (const key of keys) { const candidate = value(item, key); if (candidate !== undefined && candidate !== null) return String(candidate); } return fallback; };
+const object = (item: unknown, keys: string[]): JsonObject => {
+  for (const key of keys) {
+    const candidate = value(item, key);
+    if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) return candidate as JsonObject;
+  }
+  return {};
+};
+
+const optionalText = (item: unknown, keys: string[]): string | null | undefined => {
+  for (const key of keys) {
+    const candidate = value(item, key);
+    if (candidate !== undefined && candidate !== null) return String(candidate);
+  }
+  return candidatePresent(item, keys) ? null : undefined;
+};
+
+const candidatePresent = (item: unknown, keys: string[]) => keys.some((key) => item && typeof item === "object" && key in item);
 
 export const modelLabel = (model: string) => {
   const clean = model.split("/").pop() || model;
@@ -24,6 +45,62 @@ export function adaptCandidate(item: unknown): OptimizationCandidate {
     evalPassRate: number(item, ["evalPassRate", "eval_pass_rate", "passRate"]), evalCount: number(item, ["evalCount", "eval_count"]),
   };
 }
+
+export function adaptProfileMetrics(item: unknown): ProfileMetrics {
+  const metrics = object(item, ["metrics", "aggregateMetrics", "aggregate_metrics"]);
+  const source = Object.keys(metrics).length ? metrics : object(item, []);
+  return {
+    ...source,
+    runsObserved: number(source, ["runsObserved", "runs_observed"]), spans: number(source, ["spans"]),
+    p50LatencyMs: number(source, ["p50LatencyMs", "p50_latency_ms"]), p95LatencyMs: number(source, ["p95LatencyMs", "p95_latency_ms"]),
+    avgLatencyMs: number(source, ["avgLatencyMs", "avg_latency_ms"]), inputTokens: number(source, ["inputTokens", "input_tokens"]),
+    outputTokens: number(source, ["outputTokens", "output_tokens"]), totalTokens: number(source, ["totalTokens", "total_tokens"]),
+    totalCostUsd: number(source, ["totalCostUsd", "total_cost_usd"]), costPerRequestUsd: number(source, ["costPerRequestUsd", "cost_per_request_usd"]),
+    avgCostPerCallUsd: number(source, ["avgCostPerCallUsd", "avg_cost_per_call_usd"]), errorCount: number(source, ["errorCount", "error_count"]),
+    errorRatePct: number(source, ["errorRatePct", "error_rate_pct"]), byNode: object(source, ["byNode", "by_node"]), byModel: object(source, ["byModel", "by_model"]),
+  };
+}
+
+export function adaptProfileRun(item: unknown): ProfileRun {
+  return { runId: text(item, ["runId", "run_id", "id"]), projectId: optionalText(item, ["projectId", "project_id"] ) || undefined, status: text(item, ["status"], "QUEUED").toUpperCase(), metrics: Object.keys(object(item, ["metrics", "aggregateMetrics", "aggregate_metrics"])).length ? adaptProfileMetrics(item) : undefined, error: optionalText(item, ["error"]), createdAt: optionalText(item, ["createdAt", "created_at"]) || undefined, updatedAt: optionalText(item, ["updatedAt", "updated_at"]) || undefined, completedAt: optionalText(item, ["completedAt", "completed_at"]) };
+}
+
+export function adaptTraceSpan(item: unknown): TraceSpan {
+  return { id: text(item, ["id", "spanId", "span_id"]), traceId: text(item, ["traceId", "trace_id"]), spanId: text(item, ["spanId", "span_id"]), parentSpanId: optionalText(item, ["parentSpanId", "parent_span_id"]), nodeId: optionalText(item, ["nodeId", "node_id"]), model: optionalText(item, ["model", "requestedModel", "requested_model"]), provider: optionalText(item, ["provider"]), startedAt: optionalText(item, ["startedAt", "started_at"]), endedAt: optionalText(item, ["endedAt", "ended_at"]), durationMs: number(item, ["durationMs", "duration_ms"]), inputTokens: number(item, ["inputTokens", "input_tokens"]), outputTokens: number(item, ["outputTokens", "output_tokens"]), cost: number(item, ["cost", "costUsd", "cost_usd"]), status: text(item, ["status"], "unset"), statusCode: optionalNumber(item, ["statusCode", "status_code"]) ?? null, statusMessage: optionalText(item, ["statusMessage", "status_message"]), receivedAt: optionalText(item, ["receivedAt", "received_at"]), serviceName: optionalText(item, ["serviceName", "service_name"]) };
+}
+
+export function adaptTraceDetail(item: unknown): TraceDetail {
+  const spans = ((value(item, "spans", []) || []) as unknown[]).map(adaptTraceSpan);
+  return { id: text(item, ["id", "traceId", "trace_id"]), traceId: text(item, ["traceId", "trace_id", "id"]), projectId: text(item, ["projectId", "project_id"]), spanCount: number(item, ["spanCount", "span_count"], spans.length), startedAt: optionalText(item, ["startedAt", "started_at"]), endedAt: optionalText(item, ["endedAt", "ended_at"]), durationMs: number(item, ["durationMs", "duration_ms"]), spans };
+}
+
+export function adaptEvalGrader(item: unknown): EvalGrader { return { name: text(item, ["name"]), kind: text(item, ["kind", "type"]), config: object(item, ["config"]) }; }
+export function adaptEvalCaseInput(item: unknown): EvalCaseInput { return { id: text(item, ["id", "caseId", "case_id"]), ...(candidatePresent(item, ["input", "inputData", "input_data"]) ? { input: value(item, "input", value(item, "inputData", value(item, "input_data"))) as EvalCaseInput["input"] } : {}), ...(candidatePresent(item, ["expected"]) ? { expected: value(item, "expected") as EvalCaseInput["expected"] } : {}), metadata: object(item, ["metadata", "metadataJson", "metadata_json"]) }; }
+
+export function adaptEvalSuite(item: unknown): EvalSuite {
+  const cases = ((value(item, "cases", []) || []) as unknown[]).map(adaptEvalCaseInput);
+  const graders = ((value(item, "graders", []) || []) as unknown[]).map(adaptEvalGrader);
+  return { id: text(item, ["id", "suiteId", "suite_id"]), projectId: text(item, ["projectId", "project_id"]), organizationId: optionalText(item, ["organizationId", "organization_id"]) || undefined, name: text(item, ["name"], "Evaluation suite"), version: number(item, ["version"], 1), metadata: object(item, ["metadata", "metadataJson", "metadata_json"]), caseCount: number(item, ["caseCount", "case_count"], cases.length), graderCount: number(item, ["graderCount", "grader_count"], graders.length), ...(cases.length ? { cases } : {}), ...(graders.length ? { graders } : {}), createdAt: optionalText(item, ["createdAt", "created_at"]) || undefined, updatedAt: optionalText(item, ["updatedAt", "updated_at"]) || undefined };
+}
+
+export function adaptEvalRun(item: unknown): EvalRun {
+  return { runId: text(item, ["runId", "run_id", "id"]), projectId: text(item, ["projectId", "project_id"]), evalSuiteId: text(item, ["evalSuiteId", "eval_suite_id", "datasetId", "dataset_id"]), projectVersionId: optionalText(item, ["projectVersionId", "project_version_id"]), status: text(item, ["status"], "QUEUED").toUpperCase(), candidateConfig: object(item, ["candidateConfig", "candidate_config"]), graderSnapshot: ((value(item, "graderSnapshot", value(item, "grader_snapshot", [])) || []) as unknown[]).map(adaptEvalGrader), metrics: adaptProfileMetrics(item), caseCount: number(item, ["caseCount", "case_count"]), completedCaseCount: number(item, ["completedCaseCount", "completed_case_count"]), error: optionalText(item, ["error"]), createdAt: optionalText(item, ["createdAt", "created_at"]) || undefined, updatedAt: optionalText(item, ["updatedAt", "updated_at"]) || undefined, startedAt: optionalText(item, ["startedAt", "started_at"]), completedAt: optionalText(item, ["completedAt", "completed_at"]) };
+}
+
+export function adaptEvalRunCase(item: unknown): EvalRunCase {
+  const base = adaptEvalCase(item);
+  return { ...base, ordinal: optionalNumber(item, ["ordinal"]), score: optionalNumber(item, ["score"] ) ?? null, latencyMs: optionalNumber(item, ["latencyMs", "latency_ms"]) ?? null, evidence: object(item, ["evidence"]) };
+}
+
+export function adaptBaselineRun(item: unknown): BaselineRun { return { runId: text(item, ["runId", "run_id", "id"]), projectId: optionalText(item, ["projectId", "project_id"]) || undefined, status: text(item, ["status"], "QUEUED").toUpperCase(), config: object(item, ["config"]), result: (value(item, "result") as JsonObject | null | undefined), error: optionalText(item, ["error"]), maxExperimentCostUsd: optionalNumber(item, ["maxExperimentCostUsd", "max_experiment_cost_usd"]) } }
+
+export function adaptOptimizationRun(item: unknown): OptimizationRun { return { runId: text(item, ["runId", "run_id", "id"]), projectId: optionalText(item, ["projectId", "project_id"]) || undefined, status: text(item, ["status"], "QUEUED").toUpperCase(), config: object(item, ["config"]), candidates: ((value(item, "candidates", []) || []) as unknown[]).map(adaptCandidate), result: (value(item, "result") as JsonObject | null | undefined), error: optionalText(item, ["error"]), maxExperimentCostUsd: number(item, ["maxExperimentCostUsd", "max_experiment_cost_usd"], NaN) } }
+
+export function adaptRecommendation(item: unknown): OptimizationRecommendation { return { ...object(item, []), candidateId: optionalText(item, ["candidateId", "candidate_id"]) || undefined, selected: Boolean(value(item, "selected", false)), nodeModels: (value(item, "nodeModels", value(item, "node_models", {})) || {}) as Record<string, string> }; }
+
+export function adaptSettings(item: unknown): ProjectSettings { return { projectId: text(item, ["projectId", "project_id"]), qualityTolerancePp: number(item, ["qualityTolerancePp", "quality_tolerance_pp", "qualityTolerancePct", "quality_tolerance_pct"], 1), qualityTolerancePct: number(item, ["qualityTolerancePct", "quality_tolerance_pct", "qualityTolerancePp", "quality_tolerance_pp"], 1), confidencePct: number(item, ["confidencePct", "confidence_pct"], 95), maxP95LatencyMs: optionalNumber(item, ["maxP95LatencyMs", "max_p95_latency_ms"]) ?? null, objective: object(item, ["objective"]), allowedModels: ((value(item, "allowedModels", value(item, "allowed_models", [])) || []) as unknown[]).map(String), updatedAt: optionalText(item, ["updatedAt", "updated_at"]) } }
+
+export function adaptLayout(item: unknown): ProjectLayout { return { projectId: optionalText(item, ["projectId", "project_id"]) || undefined, versionId: optionalText(item, ["versionId", "version_id"]), revision: number(item, ["revision"], 0), nodes: (value(item, "nodes", {}) || {}) as ProjectLayout["nodes"], updatedAt: optionalText(item, ["updatedAt", "updated_at"]) } }
 
 export function adaptNode(item: unknown): AgentNode {
   const candidates = (value(item, "candidates", []) || []) as unknown[];

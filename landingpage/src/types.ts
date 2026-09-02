@@ -74,10 +74,187 @@ export interface NodePosition {
 }
 
 export interface ProjectLayout {
+  [key: string]: unknown;
   projectId?: string;
   versionId?: string | null;
   revision: number;
   nodes: Record<string, NodePosition>;
+  updatedAt?: string | null;
+}
+
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
+export type JsonObject = { [key: string]: JsonValue };
+
+export interface ApiPage {
+  nextCursor: string | null;
+}
+
+export interface ApiCollection<T> {
+  data: T[];
+  page: ApiPage;
+}
+
+export interface ProfileMetrics {
+  runsObserved?: number;
+  spans?: number;
+  p50LatencyMs?: number;
+  p95LatencyMs?: number;
+  avgLatencyMs?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  totalCostUsd?: number;
+  costPerRequestUsd?: number;
+  avgCostPerCallUsd?: number;
+  errorCount?: number;
+  errorRatePct?: number;
+  byNode?: Record<string, JsonValue>;
+  byModel?: Record<string, JsonValue>;
+  [key: string]: JsonValue | undefined;
+}
+
+export type RunStatus = 'QUEUED' | 'RUNNING' | 'PROFILING' | 'BASELINING' | 'SEARCHING' | 'VERIFYING' | 'COMPLETED' | 'CANCEL_REQUESTED' | 'CANCELLED' | 'FAILED' | 'PARTIAL' | string;
+
+export interface ProfileRun {
+  runId: string;
+  projectId?: string;
+  status: RunStatus;
+  metrics?: ProfileMetrics;
+  error?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  completedAt?: string | null;
+}
+
+export interface TraceSpan {
+  id: string;
+  traceId: string;
+  spanId: string;
+  parentSpanId?: string | null;
+  nodeId?: string | null;
+  model?: string | null;
+  provider?: string | null;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  durationMs: number;
+  inputTokens: number;
+  outputTokens: number;
+  cost: number;
+  status: string;
+  statusCode?: number | null;
+  statusMessage?: string | null;
+  receivedAt?: string | null;
+  serviceName?: string | null;
+}
+
+export interface TraceDetail {
+  id: string;
+  traceId: string;
+  projectId: string;
+  spanCount: number;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  durationMs: number;
+  spans: TraceSpan[];
+}
+
+export interface EvalGrader {
+  name: string;
+  kind: string;
+  config: JsonObject;
+}
+
+export interface EvalCaseInput {
+  id: string;
+  input?: JsonValue;
+  expected?: JsonValue;
+  metadata?: JsonObject;
+}
+
+export interface EvalSuite {
+  id: string;
+  projectId: string;
+  organizationId?: string;
+  name: string;
+  version: number;
+  metadata: JsonObject;
+  caseCount: number;
+  graderCount: number;
+  cases?: EvalCaseInput[];
+  graders?: EvalGrader[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface EvalSuiteCreateInput {
+  name: string;
+  cases: JsonObject[];
+  graders: JsonObject[];
+  metadata?: JsonObject;
+}
+
+export interface EvalRun {
+  runId: string;
+  projectId: string;
+  evalSuiteId: string;
+  projectVersionId?: string | null;
+  status: RunStatus;
+  candidateConfig: JsonObject;
+  graderSnapshot: EvalGrader[];
+  metrics: ProfileMetrics;
+  caseCount: number;
+  completedCaseCount: number;
+  error?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+}
+
+export interface EvalRunCase extends EvalCase {
+  ordinal?: number;
+  score?: number | null;
+  latencyMs?: number | null;
+  evidence?: JsonObject;
+}
+
+export interface BaselineRun {
+  runId: string;
+  projectId?: string;
+  status: RunStatus;
+  config: JsonObject;
+  result?: JsonObject | null;
+  error?: string | null;
+  maxExperimentCostUsd?: number;
+}
+
+export interface OptimizationRun {
+  runId: string;
+  projectId?: string;
+  status: RunStatus;
+  config: JsonObject;
+  candidates?: OptimizationCandidate[];
+  result?: JsonObject | null;
+  error?: string | null;
+  maxExperimentCostUsd?: number;
+}
+
+export interface OptimizationRecommendation {
+  candidateId?: string;
+  selected?: boolean;
+  nodeModels?: Record<string, string>;
+  [key: string]: JsonValue | undefined;
+}
+
+export interface ProjectSettings {
+  projectId: string;
+  qualityTolerancePp: number;
+  qualityTolerancePct: number;
+  confidencePct: number;
+  maxP95LatencyMs?: number | null;
+  objective: JsonObject;
+  allowedModels: string[];
   updatedAt?: string | null;
 }
 
