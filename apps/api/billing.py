@@ -45,7 +45,7 @@ class HttpDodoClient:
     """Minimal dependency-free Dodo REST client for the checkout call."""
 
     def create_checkout_session(self, payload: dict[str, Any], *, idempotency_key: str) -> dict[str, Any]:
-        token = os.getenv("DODO_PAYMENTS_API_KEY", "").strip()
+        token = (os.getenv("DODO_PAYMENTS_API_KEY") or os.getenv("DODO_API_KEY") or "").strip()
         product_id = os.getenv("DODO_PRO_PRODUCT_ID", "").strip()
         if not token or not product_id:
             raise DodoConfigurationError("Dodo checkout is not configured")
