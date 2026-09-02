@@ -10,6 +10,7 @@ for path in sorted(root.glob("*.py")):
   if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name) and node.targets[0].id in {"revision","down_revision"}:
    vals[node.targets[0].id]=ast.literal_eval(node.value)
  if "revision" in vals: revisions[vals["revision"]]=vals.get("down_revision")
-heads=[r for r in revisions if r not in set(v for v in revisions.values() if isinstance(v,str))]
+parents = {parent for value in revisions.values() for parent in (value if isinstance(value, (tuple, list, set)) else (value,)) if isinstance(parent, str)}
+heads=[r for r in revisions if r not in parents]
 if len(heads)!=1: raise SystemExit(f"expected one migration head, found {heads}")
 print(f"valid migration chain head={heads[0]} revisions={len(revisions)}")
