@@ -83,7 +83,7 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
     },
     {
       id: 'evals' as ViewMode,
-      label: 'Eval Suite (120)',
+      label: 'Eval Suite',
       shortLabel: 'Evals',
       icon: CheckCircle2,
       shortcut: '5'
@@ -199,4 +199,3 @@ export const NavigationRail: React.FC<NavigationRailProps> = ({
     </aside>
   );
 };
-

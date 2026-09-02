@@ -29,11 +29,35 @@ export const OptimizationFrontier: React.FC<OptimizationFrontierProps> = ({
     candidates.find((c) => c.id === selectedCandidateId) || candidates[0];
   const activeInspection = hoveredCandidate || selectedCandidate;
 
-  // Chart dimensions & scaling
-  const minCost = 0.05;
-  const maxCost = 0.42;
-  const minQuality = 70;
-  const maxQuality = 96;
+  // Chart dimensions & scaling are derived from the server-returned candidate
+  // set. The view must not assume a particular provider catalog or benchmark.
+  const costValues = candidates.map((candidate) => candidate.costPerReq).filter(Number.isFinite);
+  const qualityValues = candidates.map((candidate) => candidate.qualityPct).filter(Number.isFinite);
+  const baselineCost = Number.isFinite(project.baselineCost) ? project.baselineCost : 0;
+  const baselineQuality = Number.isFinite(project.baselineQuality) ? project.baselineQuality : 0;
+  const rawMinCost = Math.min(...costValues, baselineCost);
+  const rawMaxCost = Math.max(...costValues, baselineCost);
+  const rawMinQuality = Math.min(...qualityValues, baselineQuality);
+  const rawMaxQuality = Math.max(...qualityValues, baselineQuality);
+  const costSpan = Math.max(rawMaxCost - rawMinCost, 0.001);
+  const qualitySpan = Math.max(rawMaxQuality - rawMinQuality, 0.1);
+  const minCost = Math.max(0, rawMinCost - Math.max(costSpan * 0.08, 0.001));
+  const maxCost = rawMaxCost + Math.max(costSpan * 0.08, 0.001);
+  const minQuality = rawMinQuality - Math.max(qualitySpan * 0.08, 0.1);
+  const maxQuality = rawMaxQuality + Math.max(qualitySpan * 0.08, 0.1);
+  const qualityTicks = Array.from({ length: 5 }, (_, index) => minQuality + ((maxQuality - minQuality) * index) / 4);
+  const costTicks = Array.from({ length: 4 }, (_, index) => minCost + ((maxCost - minCost) * (index + 1)) / 5);
+  const tolerance = Math.max(0, project.qualityTolerancePct);
+  const toleranceTop = Math.min(maxQuality, baselineQuality + tolerance);
+  const toleranceBottom = Math.max(minQuality, baselineQuality - tolerance);
+
+  if (!activeInspection) {
+    return (
+      <div className="studio-view flex flex-1 items-center justify-center bg-[#050505] p-6 font-mono text-xs text-[#8C949B]">
+        No persisted optimization candidates are available for this run.
+      </div>
+    );
+  }
 
   const svgWidth = 720;
   const svgHeight = 400;
@@ -129,7 +153,7 @@ export const OptimizationFrontier: React.FC<OptimizationFrontierProps> = ({
             </defs>
 
             {/* Grid Lines: Horizontal Quality */}
-            {[75, 80, 85, 90, 95].map((q) => {
+            {qualityTicks.map((q) => {
               const y = scaleY(q);
               return (
                 <g key={`q-${q}`}>
@@ -149,14 +173,14 @@ export const OptimizationFrontier: React.FC<OptimizationFrontierProps> = ({
                     fontFamily="monospace"
                     textAnchor="end"
                   >
-                    {q}%
+                    {q.toFixed(1)}%
                   </text>
                 </g>
               );
             })}
 
             {/* Grid Lines: Vertical Cost */}
-            {[0.1, 0.2, 0.3, 0.4].map((c) => {
+            {costTicks.map((c) => {
               const x = scaleX(c);
               return (
                 <g key={`c-${c}`}>
@@ -176,7 +200,7 @@ export const OptimizationFrontier: React.FC<OptimizationFrontierProps> = ({
                     fontFamily="monospace"
                     textAnchor="middle"
                   >
-                    ${c.toFixed(2)}
+                    ${c.toFixed(3)}
                   </text>
                 </g>
               );
@@ -208,22 +232,22 @@ export const OptimizationFrontier: React.FC<OptimizationFrontierProps> = ({
             {/* Baseline Quality Tolerance Band */}
             <rect
               x={padding.left}
-              y={scaleY(93.4)}
+              y={scaleY(toleranceTop)}
               width={innerWidth}
-              height={scaleY(91.4) - scaleY(93.4)}
+              height={Math.max(0, scaleY(toleranceBottom) - scaleY(toleranceTop))}
               fill="rgba(255, 255, 255, 0.02)"
               stroke="rgba(255, 255, 255, 0.06)"
               strokeDasharray="2 2"
             />
             <text
               x={svgWidth - padding.right - 10}
-              y={scaleY(93.4) + 12}
+              y={scaleY(toleranceTop) + 12}
               fill="#5C6268"
               fontSize="9"
               fontFamily="monospace"
               textAnchor="end"
             >
-              ±1.0% Quality Tolerance Envelope
+              ±{tolerance.toFixed(1)}% Quality Tolerance Envelope
             </text>
 
             {/* Pareto Frontier Curve Line */}
@@ -336,7 +360,7 @@ export const OptimizationFrontier: React.FC<OptimizationFrontierProps> = ({
                           fontWeight="bold"
                           textAnchor="middle"
                         >
-                          ★ OPTIMAL (#42)
+                          ★ RECOMMENDED
                         </text>
                       </g>
                     )}

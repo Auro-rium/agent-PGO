@@ -19,6 +19,20 @@ export const BeforeAfterDiff: React.FC<BeforeAfterDiffProps> = ({
   onDeployOptimized,
   onOpenExport
 }) => {
+  const costReductionPct = project.savingsPct;
+  const latencyDeltaSec = project.baselineLatencyP95 - project.optimizedLatencyP95;
+  const latencyReductionPct = project.baselineLatencyP95 > 0
+    ? (latencyDeltaSec / project.baselineLatencyP95) * 100
+    : 0;
+  const qualityDeltaPp = project.optimizedQuality - project.baselineQuality;
+  const costBarWidth = project.baselineCost > 0
+    ? Math.min(100, Math.max(0, (project.optimizedCost / project.baselineCost) * 100))
+    : 0;
+  const changedNodes = project.nodes.filter((node) => node.optimizedModel !== node.baselineModel).length;
+  const verificationLabel = project.evalCasesCount > 0 && project.baselineQuality > 0
+    ? 'MEASURED'
+    : 'NOT VERIFIED';
+
   return (
     <div className="studio-view flex-1 h-full bg-[#050505] p-4 md:p-6 overflow-y-auto select-none flex flex-col space-y-4 font-mono text-xs">
       {/* Top Banner: Core Before / After Comparison */}
@@ -40,7 +54,7 @@ export const BeforeAfterDiff: React.FC<BeforeAfterDiffProps> = ({
             <div className="text-right">
               <span className="text-[9.5px] text-[#5C6268] uppercase block">Measured Reduction</span>
               <span className="text-base font-bold text-[#F2F3F4] tracking-tight">
-                -63.1% LOWER COST
+                {costReductionPct.toFixed(1)}% LOWER COST
               </span>
             </div>
             <div className="px-3 py-1.5 rounded silver-btn-gradient text-[#050505] text-xs font-bold flex items-center gap-1.5 shadow-sm">
@@ -73,7 +87,7 @@ export const BeforeAfterDiff: React.FC<BeforeAfterDiffProps> = ({
               </div>
             </div>
             <div className="w-full h-1 bg-[#14171A] rounded-full overflow-hidden">
-              <div className="h-full bg-[#D7DADD] w-[36.9%]" />
+              <div className="h-full bg-[#D7DADD]" style={{ width: `${costBarWidth}%` }} />
             </div>
           </div>
 
@@ -98,8 +112,8 @@ export const BeforeAfterDiff: React.FC<BeforeAfterDiffProps> = ({
               </div>
             </div>
             <div className="text-[10.5px] text-[#A0A5AA] flex justify-between">
-              <span>34.4% Latency Reduction</span>
-              <span className="text-[#5C6268]">-8.3s faster</span>
+              <span>{latencyReductionPct.toFixed(1)}% Latency Reduction</span>
+              <span className="text-[#5C6268]">{latencyDeltaSec >= 0 ? '-' : '+'}{Math.abs(latencyDeltaSec).toFixed(1)}s</span>
             </div>
           </div>
 
@@ -124,8 +138,8 @@ export const BeforeAfterDiff: React.FC<BeforeAfterDiffProps> = ({
               </div>
             </div>
             <div className="text-[10.5px] text-[#D7DADD] flex justify-between">
-              <span>+0.3pp Quality Lift</span>
-              <span className="text-[#5C6268]">0.0% regression</span>
+              <span>{qualityDeltaPp >= 0 ? '+' : ''}{qualityDeltaPp.toFixed(1)}pp Quality Delta</span>
+              <span className="text-[#5C6268]">{qualityDeltaPp < 0 ? 'regression' : 'improvement'}</span>
             </div>
           </div>
         </div>
@@ -143,7 +157,7 @@ export const BeforeAfterDiff: React.FC<BeforeAfterDiffProps> = ({
             </div>
           </div>
           <span className="text-xs text-[#5C6268]">
-            4 Changed · 1 Preserved
+            {changedNodes} Changed · {Math.max(0, project.nodes.length - changedNodes)} Preserved
           </span>
         </div>
 
@@ -172,7 +186,7 @@ export const BeforeAfterDiff: React.FC<BeforeAfterDiffProps> = ({
                         : 'bg-white/[0.02] border border-white/[0.04] text-[#5C6268]'
                     }`}
                   >
-                    {isChanged ? 'Changed' : 'Preserved (Sol)'}
+                    {isChanged ? 'Changed' : 'Preserved'}
                   </span>
                 </div>
 
@@ -220,36 +234,36 @@ export const BeforeAfterDiff: React.FC<BeforeAfterDiffProps> = ({
             </span>
           </div>
           <span className="px-2 py-0.5 rounded bg-[#0F1113] border border-white/[0.1] text-xs text-[#F2F3F4] font-semibold">
-            CERTIFIED PASS
+            {verificationLabel}
           </span>
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs pt-1">
           <div className="p-2 rounded bg-[#050505] border border-white/[0.04]">
             <span className="text-[9px] text-[#5C6268] uppercase block">Eval Cases</span>
-            <span className="font-semibold text-[#F2F3F4]">120 Gold Cases</span>
+            <span className="font-semibold text-[#F2F3F4]">{project.evalCasesCount.toLocaleString()} cases</span>
           </div>
           <div className="p-2 rounded bg-[#050505] border border-white/[0.04]">
             <span className="text-[9px] text-[#5C6268] uppercase block">Baseline Score</span>
-            <span className="font-semibold text-[#A0A5AA]">92.4%</span>
+            <span className="font-semibold text-[#A0A5AA]">{project.baselineQuality.toFixed(1)}%</span>
           </div>
           <div className="p-2 rounded bg-[#050505] border border-white/[0.04]">
             <span className="text-[9px] text-[#5C6268] uppercase block">Compiled Score</span>
-            <span className="font-semibold text-[#F2F3F4]">92.7%</span>
+            <span className="font-semibold text-[#F2F3F4]">{project.optimizedQuality.toFixed(1)}%</span>
           </div>
           <div className="p-2 rounded bg-[#050505] border border-white/[0.04]">
             <span className="text-[9px] text-[#5C6268] uppercase block">Tolerance Bound</span>
-            <span className="font-semibold text-[#D7DADD]">±1.0% Max Delta</span>
+            <span className="font-semibold text-[#D7DADD]">±{project.qualityTolerancePct.toFixed(1)}% Max Delta</span>
           </div>
           <div className="p-2 rounded bg-[#050505] border border-white/[0.04]">
             <span className="text-[9px] text-[#5C6268] uppercase block">Confidence</span>
-            <span className="font-semibold text-[#D7DADD]">95% (p &lt; 0.01)</span>
+            <span className="font-semibold text-[#D7DADD]">{project.confidencePct.toFixed(0)}% confidence</span>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-4 pt-3 border-t border-white/[0.05]">
           <p className="text-xs text-[#5C6268]">
-            Artifact verified against multi-hop regression test vectors. Ready for runtime deployment.
+            Displayed from persisted project and optimization evidence. Production changes remain a manual approval step.
           </p>
 
           <div className="flex items-center gap-2">
@@ -266,7 +280,7 @@ export const BeforeAfterDiff: React.FC<BeforeAfterDiffProps> = ({
               className="px-3.5 py-1.5 rounded silver-btn-gradient text-[#050505] text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all"
             >
               <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Deploy to Production</span>
+              <span>Review Recommendation</span>
             </button>
           </div>
         </div>
@@ -274,4 +288,3 @@ export const BeforeAfterDiff: React.FC<BeforeAfterDiffProps> = ({
     </div>
   );
 };
-

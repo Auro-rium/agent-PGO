@@ -466,7 +466,7 @@ export const ExecutionGraph: React.FC<ExecutionGraphProps> = ({
                       {testingStatus.fromModel} → <strong className="text-[#F2F3F4]">{testingStatus.toModel}</strong>
                     </div>
                     <div className="text-[9.5px] font-mono text-[#5C6268] mt-0.5 animate-pulse">
-                      TESTING 120 EVALS...
+                      TESTING {project.evalCasesCount.toLocaleString()} EVALS...
                     </div>
                   </div>
 

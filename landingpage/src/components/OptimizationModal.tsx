@@ -34,6 +34,8 @@ export const OptimizationModal: React.FC<OptimizationModalProps> = ({
   onOpenFrontier
 }) => {
   const terminalEndRef = useRef<HTMLDivElement>(null);
+  const latencyDeltaSec = project.baselineLatencyP95 - project.optimizedLatencyP95;
+  const qualityDeltaPp = project.optimizedQuality - project.baselineQuality;
 
   useEffect(() => {
     if (terminalEndRef.current) {
@@ -69,7 +71,7 @@ export const OptimizationModal: React.FC<OptimizationModalProps> = ({
               <div className="text-[10px] text-[#5C6268]">
                 {isOptimizing
                   ? `Compiling DAG node configurations · Step ${currentStepIndex} of ${totalSteps}`
-                  : 'Compilation Complete · Candidate #42 Synthesized'}
+                  : 'Optimization run complete'}
               </div>
             </div>
           </div>
@@ -107,7 +109,7 @@ export const OptimizationModal: React.FC<OptimizationModalProps> = ({
                 <Terminal className="w-3 h-3 text-[#A0A5AA]" />
                 <span className="uppercase tracking-wider">Optimizer Event Stream</span>
               </div>
-              <span>120 eval vectors / test batch</span>
+              <span>{project.evalCasesCount.toLocaleString()} eval vectors / test batch</span>
             </div>
 
             <div className="flex-1 p-3 overflow-y-auto text-xs space-y-1.5 selection:bg-white/[0.1]">
@@ -167,7 +169,7 @@ export const OptimizationModal: React.FC<OptimizationModalProps> = ({
                     <span className="text-sm font-bold text-[#F2F3F4]">${project.optimizedCost.toFixed(3)}</span>
                   </div>
                   <div className="text-[10px] text-[#D7DADD] font-medium mt-1">
-                    -63.1% Lower Execution Cost
+                    {project.savingsPct.toFixed(1)}% Lower Execution Cost
                   </div>
                 </div>
 
@@ -178,7 +180,7 @@ export const OptimizationModal: React.FC<OptimizationModalProps> = ({
                     <span className="text-sm font-bold text-[#D7DADD]">{project.optimizedLatencyP95.toFixed(1)}s</span>
                   </div>
                   <div className="text-[10px] text-[#A0A5AA] mt-1">
-                    -8.3s Latency Reduction
+                    {latencyDeltaSec >= 0 ? '-' : '+'}{Math.abs(latencyDeltaSec).toFixed(1)}s Latency Delta
                   </div>
                 </div>
 
@@ -189,7 +191,7 @@ export const OptimizationModal: React.FC<OptimizationModalProps> = ({
                     <span className="text-sm font-bold text-[#F2F3F4]">{project.optimizedQuality.toFixed(1)}%</span>
                   </div>
                   <div className="text-[10px] text-[#D7DADD] mt-1">
-                    +0.3pp Measured Quality Lift
+                    {qualityDeltaPp >= 0 ? '+' : ''}{qualityDeltaPp.toFixed(1)}pp Measured Quality Delta
                   </div>
                 </div>
               </div>
@@ -201,7 +203,7 @@ export const OptimizationModal: React.FC<OptimizationModalProps> = ({
                   +${project.monthlySavingsEstimate.toLocaleString()} / mo
                 </span>
                 <span className="text-[10px] text-[#A0A5AA]">
-                  at 35,000 production executions
+                  at {project.monthlyRequests.toLocaleString()} monthly executions
                 </span>
               </div>
             </div>
@@ -232,4 +234,3 @@ export const OptimizationModal: React.FC<OptimizationModalProps> = ({
     </div>
   );
 };
-

@@ -27,6 +27,10 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
 }) => {
   const { width, startResize } = useResizableWidth(352, 280, 520, true);
   const [activeTab, setActiveTab] = useState<'profile' | 'prompt'>('profile');
+  const evalCasesLabel = project.evalCasesCount > 0
+    ? `${project.evalCasesCount.toLocaleString()} eval cases`
+    : 'no eval cases recorded';
+  const firstSubstitution = selectedNode?.candidates.find((candidate) => candidate.status !== 'BASELINE');
 
   // If no node is selected, show the Agent Global Profiler
   if (!selectedNode) {
@@ -125,7 +129,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
             </div>
             <div className="flex items-center justify-between text-[#A0A5AA]">
               <span>Confidence Interval:</span>
-              <span className="text-[#D7DADD]">{project.confidencePct}% (p &lt; 0.01)</span>
+              <span className="text-[#D7DADD]">{project.confidencePct}% confidence</span>
             </div>
           </div>
 
@@ -355,14 +359,14 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
           <div className="p-3 rounded bg-[#0F1113] border border-white/[0.06] space-y-1">
             <div className="text-[9px] uppercase text-[#5C6268]">Optimizer Recommendation</div>
             <div className="text-xs font-semibold text-[#F2F3F4]">
-              {selectedNode.qualitySensitivity === 'HIGH' ? 'KEEP SOL (FRONTIER REASONING)' : `SUBSTITUTE WITH ${selectedNode.optimizedModel.toUpperCase()}`}
+              {selectedNode.qualitySensitivity === 'HIGH' ? `KEEP ${selectedNode.baselineModel.toUpperCase()}` : `SUBSTITUTE WITH ${selectedNode.optimizedModel.toUpperCase()}`}
             </div>
             <div className="text-[10.5px] text-[#A0A5AA] leading-relaxed">
               {selectedNode.qualitySensitivity === 'HIGH'
-                ? 'High reasoning sensitivity node. Downscaling model produces severe logical regressions in 120-case eval harness.'
-                : `Validated across 120 gold cases with zero semantic regression and ${Math.abs(
-                    selectedNode.candidates[0]?.costDeltaPct || 65
-                  )}% lower execution cost.`}
+                ? `High reasoning sensitivity node. Downscaling this baseline model may regress quality; ${evalCasesLabel} are available for verification.`
+                : firstSubstitution
+                  ? `Validated against ${evalCasesLabel} with a measured substitution delta of ${Math.abs(firstSubstitution.costDeltaPct).toFixed(1)}% lower execution cost.`
+                  : `No substitution evidence is available for this node yet; ${evalCasesLabel}.`}
             </div>
           </div>
         </div>
@@ -382,16 +386,12 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
             <div className="text-[9.5px] text-[#5C6268] uppercase">Token Ingestion Distribution</div>
             <div className="space-y-1 text-[10.5px] text-[#A0A5AA]">
               <div className="flex justify-between">
-                <span>System instructions:</span>
-                <span className="text-[#D7DADD]">420 tok</span>
+                <span>Input token total:</span>
+                <span className="text-[#D7DADD]">{selectedNode.inputTokens.toLocaleString()} tok</span>
               </div>
               <div className="flex justify-between">
-                <span>Dynamic context / DAG inputs:</span>
-                <span className="text-[#D7DADD]">{selectedNode.inputTokens - 420} tok</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Generation budget:</span>
-                <span className="text-[#D7DADD]">{selectedNode.outputTokens} tok</span>
+                <span>Output token total:</span>
+                <span className="text-[#D7DADD]">{selectedNode.outputTokens.toLocaleString()} tok</span>
               </div>
             </div>
           </div>
@@ -401,4 +401,3 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
     </aside>
   );
 };
-

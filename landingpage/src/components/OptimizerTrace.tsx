@@ -35,7 +35,7 @@ export const OptimizerTrace: React.FC<OptimizerTraceProps> = ({ events, project 
             </span>
           </div>
           <p className="text-[11px] text-[#5C6268] mt-0.5">
-            Deterministic step execution telemetry · Run #1842 · 120 eval passes per candidate
+            Server optimizer events{project.runId ? ` · Run ${project.runId}` : ''} · {project.evalCasesCount.toLocaleString()} eval cases
           </p>
         </div>
 
@@ -70,7 +70,7 @@ export const OptimizerTrace: React.FC<OptimizerTraceProps> = ({ events, project 
       <div className="bg-[#090A0B] border border-white/[0.06] rounded-lg p-4 space-y-3">
         <div className="text-[10px] font-semibold uppercase text-[#5C6268] tracking-wider flex items-center justify-between">
           <span>Execution Latency Waterfall (Baseline vs Compiled)</span>
-          <span className="text-[#A0A5AA]">24.1s → 15.8s P95</span>
+          <span className="text-[#A0A5AA]">{project.baselineLatencyP95.toFixed(1)}s → {project.optimizedLatencyP95.toFixed(1)}s P95</span>
         </div>
 
         <div className="space-y-2 text-xs">
@@ -153,4 +153,3 @@ export const OptimizerTrace: React.FC<OptimizerTraceProps> = ({ events, project 
     </div>
   );
 };
-
