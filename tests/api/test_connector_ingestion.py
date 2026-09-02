@@ -121,6 +121,91 @@ def test_connector_replay_is_idempotent_and_profile_counts_one_call(connector_cl
     assert profile.json()["p95_latency_ms"] == pytest.approx(3810.0)
 
 
+def test_trace_list_is_paginated_and_metadata_only(connector_client):
+    headers = auth(connector_client)
+    project_id = connector_client.connector_ids["first_project"]
+    first = connector_payload(trace_id="a" * 32, span_id="b" * 16)
+    second = connector_payload(trace_id="c" * 32, span_id="d" * 16)
+    assert connector_client.post("/v1/traces", headers=headers, json=first).json()["accepted"] == 1
+    assert connector_client.post("/v1/traces", headers=headers, json=second).json()["accepted"] == 1
+
+    page = connector_client.get(
+        f"/api/v1/projects/{project_id}/traces?limit=1",
+        headers=headers,
+    )
+    assert page.status_code == 200
+    assert len(page.json()["data"]) == 1
+    assert page.json()["page"]["nextCursor"]
+    item = page.json()["data"][0]
+    assert item["traceId"] in {"a" * 32, "c" * 32}
+    assert item["nodeId"] == "researcher"
+    assert item["model"] == "openai/gpt-5.6-sol"
+    assert item["provider"] == "openai"
+    assert item["inputTokens"] == 18342
+    assert item["outputTokens"] == 1282
+    assert item["cost"] == pytest.approx(0.382)
+    assert item["durationMs"] == pytest.approx(3810.0)
+    assert "rawSpan" not in item
+    assert "attributes" not in item
+
+    next_page = connector_client.get(
+        f"/v1/projects/{project_id}/traces",
+        params={"limit": 1, "cursor": page.json()["page"]["nextCursor"]},
+        headers=headers,
+    )
+    assert next_page.status_code == 200
+    assert len(next_page.json()["data"]) == 1
+    assert next_page.json()["data"][0]["traceId"] != item["traceId"]
+    assert next_page.json()["page"]["nextCursor"] is None
+
+
+def test_trace_detail_groups_spans_without_exposing_content(connector_client):
+    headers = auth(connector_client)
+    project_id = connector_client.connector_ids["first_project"]
+    trace_id = "e" * 32
+    first = connector_payload(trace_id=trace_id, span_id="f" * 16)
+    second = connector_payload(trace_id=trace_id, span_id="1" * 16)
+    assert connector_client.post("/v1/traces", headers=headers, json=first).json()["accepted"] == 1
+    assert connector_client.post("/v1/traces", headers=headers, json=second).json()["accepted"] == 1
+
+    detail = connector_client.get(
+        f"/api/v1/projects/{project_id}/traces/{trace_id}",
+        headers=headers,
+    )
+    assert detail.status_code == 200
+    assert detail.json()["traceId"] == trace_id
+    assert detail.json()["spanCount"] == 2
+    assert detail.json()["durationMs"] == pytest.approx(3810.0)
+    assert {span["spanId"] for span in detail.json()["spans"]} == {"f" * 16, "1" * 16}
+    assert all("rawSpan" not in span and "attributes" not in span for span in detail.json()["spans"])
+
+
+def test_profile_reports_persisted_usage_cost_latency_and_breakdowns(connector_client):
+    headers = auth(connector_client)
+    project_id = connector_client.connector_ids["first_project"]
+    assert connector_client.post("/v1/traces", headers=headers, json=connector_payload()).json()["accepted"] == 1
+    second = connector_payload(trace_id="2" * 32, span_id="3" * 16)
+    assert connector_client.post("/v1/traces", headers=headers, json=second).json()["accepted"] == 1
+
+    profile = connector_client.get(
+        f"/v1/projects/{project_id}/profile",
+        headers=headers,
+    )
+    assert profile.status_code == 200
+    payload = profile.json()
+    assert payload["runs_observed"] == 2
+    assert payload["model_calls"] == 2
+    assert payload["input_tokens"] == 36684
+    assert payload["output_tokens"] == 2564
+    assert payload["total_tokens"] == 39248
+    assert payload["total_cost_usd"] == pytest.approx(0.764)
+    assert payload["cost_per_request_usd"] == pytest.approx(0.382)
+    assert payload["avg_cost_per_call_usd"] == pytest.approx(0.382)
+    assert payload["avg_latency_ms"] == pytest.approx(3810.0)
+    assert payload["by_node"]["researcher"]["calls"] == 2
+    assert payload["by_model"]["openai/gpt-5.6-sol"]["cost"] == pytest.approx(0.764)
+
+
 def test_connector_project_key_cannot_ingest_or_profile_another_project(connector_client):
     headers = auth(connector_client)
     payload = connector_payload(trace_id="c" * 32, span_id="d" * 16)
