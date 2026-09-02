@@ -68,6 +68,19 @@ export interface GraphEdge {
   avgLatencyMs: number;
 }
 
+export interface NodePosition {
+  x: number;
+  y: number;
+}
+
+export interface ProjectLayout {
+  projectId?: string;
+  versionId?: string | null;
+  revision: number;
+  nodes: Record<string, NodePosition>;
+  updatedAt?: string | null;
+}
+
 export interface OptimizationCandidate {
   id: string;
   name: string;

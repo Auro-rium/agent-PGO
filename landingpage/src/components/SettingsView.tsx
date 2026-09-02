@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Check, Settings as SettingsIcon, ShieldCheck } from 'lucide-react';
 import { AgentProject } from '../types';
 
@@ -11,6 +11,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ project, onUpdatePro
   const [tolerance, setTolerance] = useState(project.qualityTolerancePct);
   const [evalCases, setEvalCases] = useState(project.evalCasesCount);
   const [confidence, setConfidence] = useState(project.confidencePct);
+
+  useEffect(() => {
+    setTolerance(project.qualityTolerancePct);
+    setEvalCases(project.evalCasesCount);
+    setConfidence(project.confidencePct);
+  }, [project.id, project.qualityTolerancePct, project.evalCasesCount, project.confidencePct]);
 
   const applySettings = () => onUpdateProjectSettings({ qualityTolerancePct: tolerance, evalCasesCount: evalCases, confidencePct: confidence });
 

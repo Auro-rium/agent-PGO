@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { AgentProject } from '../types';
+import { AgentProject, NodePosition } from '../types';
 import { 
   ZoomIn, 
   ZoomOut, 
@@ -24,6 +24,9 @@ interface ExecutionGraphProps {
     costChange?: string;
     qualityChange?: string;
   } | null;
+  layout?: Record<string, NodePosition>;
+  layoutRevision?: number;
+  onLayoutChange?: (positions: Record<string, NodePosition>) => void;
 }
 
 export const ExecutionGraph: React.FC<ExecutionGraphProps> = ({
@@ -33,7 +36,10 @@ export const ExecutionGraph: React.FC<ExecutionGraphProps> = ({
   isOptimizing,
   onRunOptimization,
   activeTestingNodeId,
-  testingStatus
+  testingStatus,
+  layout = {},
+  layoutRevision = 0,
+  onLayoutChange
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
@@ -75,15 +81,33 @@ export const ExecutionGraph: React.FC<ExecutionGraphProps> = ({
     });
   }, []);
 
-  // Initialize node positions from project
+  const flushPendingNode = useCallback(() => {
+    const pending = pendingNodeRef.current;
+    if (!pending) return;
+    pendingNodeRef.current = null;
+    const nextPositions = { ...nodePositionsRef.current, [pending.id]: pending.position };
+    nodePositionsRef.current = nextPositions;
+    setNodePositions(nextPositions);
+    onLayoutChange?.(nextPositions);
+  }, [onLayoutChange]);
+
+  // Initialize node positions from the persisted project layout. Layouts are
+  // revisioned server state, so re-read them when a project or layout revision
+  // changes but keep drag updates local until the pointer is released.
   useEffect(() => {
     const initialPos: Record<string, { x: number; y: number }> = {};
     project.nodes.forEach((n) => {
       initialPos[n.id] = { x: n.x, y: n.y };
     });
+    Object.entries(layout).forEach(([nodeId, rawPosition]) => {
+      const position = rawPosition as NodePosition;
+      if (initialPos[nodeId] && Number.isFinite(position.x) && Number.isFinite(position.y)) {
+        initialPos[nodeId] = { x: position.x, y: position.y };
+      }
+    });
     nodePositionsRef.current = initialPos;
     setNodePositions(initialPos);
-  }, [project.id]);
+  }, [layout, layoutRevision, project.id, project.nodes]);
 
   useEffect(() => () => {
     if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
@@ -122,6 +146,7 @@ export const ExecutionGraph: React.FC<ExecutionGraphProps> = ({
   };
 
   const handleMouseUp = () => {
+    flushPendingNode();
     dragRef.current = null;
   };
 
@@ -525,4 +550,3 @@ export const ExecutionGraph: React.FC<ExecutionGraphProps> = ({
     </div>
   );
 };
-

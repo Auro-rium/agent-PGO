@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AgentProject } from '../types';
 import { 
   X, 
@@ -22,6 +22,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [tolerance, setTolerance] = useState(project.qualityTolerancePct);
   const [evalCases, setEvalCases] = useState(project.evalCasesCount);
   const [confidence, setConfidence] = useState(project.confidencePct);
+
+  useEffect(() => {
+    setTolerance(project.qualityTolerancePct);
+    setEvalCases(project.evalCasesCount);
+    setConfidence(project.confidencePct);
+  }, [project.id, project.qualityTolerancePct, project.evalCasesCount, project.confidencePct]);
 
   if (!isOpen) return null;
 
@@ -152,4 +158,3 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     </div>
   );
 };
-
