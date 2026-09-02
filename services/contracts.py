@@ -34,7 +34,7 @@ class CandidateConfig(VersionedContract):
     candidate is submitted and are persisted in result metadata when known.
     """
 
-    id: str = Field(min_length=1, max_length=255)
+    id: str = Field(default="baseline", min_length=1, max_length=255)
     provider: str | None = Field(default=None, min_length=1, max_length=128)
     model: str | None = Field(default=None, min_length=1, max_length=255)
     parameters: dict[str, Any] = Field(default_factory=dict)

@@ -15,7 +15,7 @@ from threading import Event, Lock, Thread
 from typing import Any, Callable
 from uuid import uuid4
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 from apps.api.models import Job, JobCandidateResult, OptimizationResult, utc_now
@@ -74,6 +74,31 @@ class JobRepository:
             return session.scalar(
                 select(Job).options(selectinload(Job.candidate_results)).where(Job.id == job_id)
             )
+
+    def cancellation_requested(self, job_id: str) -> bool:
+        with self.session_factory() as session:
+            job = session.get(Job, job_id)
+            return bool(job and job.cancel_requested_at is not None)
+
+    def append_event(self, job_id: str, event_type: str, payload: dict[str, Any], *, event_id: str | None = None) -> dict[str, Any] | None:
+        """Append an optimization event with a monotonic per-run sequence."""
+        from apps.api.models import OptimizationEvent
+        with self.session_factory.begin() as session:
+            job = session.get(Job, job_id, with_for_update=True)
+            if job is None or job.kind != "optimization":
+                return None
+            stable_id = event_id or f"{job_id}:{uuid4().hex}"
+            existing = session.scalar(select(OptimizationEvent).where(OptimizationEvent.job_id == job_id, OptimizationEvent.event_id == stable_id))
+            if existing is not None:
+                return {"id": existing.event_id, "sequence": existing.sequence, "type": existing.event_type, **(existing.payload or {})}
+            last = session.scalar(select(func.max(OptimizationEvent.sequence)).where(OptimizationEvent.job_id == job_id))
+            event = OptimizationEvent(
+                organization_id=job.organization_id, project_id=job.project_id, job_id=job_id,
+                sequence=int(last or 0) + 1, event_id=stable_id, event_type=event_type.upper(), payload=dict(payload),
+            )
+            session.add(event)
+            session.flush()
+            return {"id": event.event_id, "sequence": event.sequence, "type": event.event_type, "timestamp": event.created_at.isoformat(), **payload}
 
     def claim_next(self, worker_id: str, *, lease_seconds: int = 60) -> Job | None:
         """Atomically claim one available queued/expired job.
@@ -497,10 +522,20 @@ class WorkerRuntime:
             raise LeaseLostError(job.id) from self._executor_lease_lost
         return result
 
+    def _cancel_if_requested(self, job: Job, *, stage: str) -> bool:
+        if job.kind != "optimization" or not self.repository.cancellation_requested(job.id):
+            return False
+        self.repository.append_event(job.id, "INFO", {"message": "Optimization cancelled", "status": "CANCELLED", "stage": stage}, event_id=f"{job.id}:cancelled")
+        if self.repository.transition(job.id, JobState.CANCELLED, worker_id=self.worker_id, lease_token=self._lease_token) is None:
+            raise LeaseLostError(job.id)
+        return True
+
     def _execute(self, claimed: Job) -> None:
         job = self.repository.get(claimed.id)
         if job is None:
             raise KeyError(claimed.id)
+        if self._cancel_if_requested(job, stage="start"):
+            return
         payload = job.payload if isinstance(job.payload, dict) else {}
         if job.kind == "profile":
             if self.repository.transition(job.id, JobState.EVALUATING, worker_id=self.worker_id, lease_token=self._lease_token) is None:
@@ -523,15 +558,19 @@ class WorkerRuntime:
         candidates = [item if isinstance(item, dict) else {"id": str(index), "value": item} for index, item in enumerate(raw_candidates)]
         if self.repository.transition(job.id, JobState.EVALUATING, worker_id=self.worker_id, lease_token=self._lease_token) is None:
             raise LeaseLostError(job.id)
+        self.repository.append_event(job.id, "INFO", {"message": "Evaluating candidate configurations", "status": "EVALUATING"}, event_id=f"{job.id}:evaluating")
         fresh = self.repository.get(job.id)
         completed_ids = set((fresh.checkpoint if fresh else {}).get("completed_candidate_ids", []))
         spent = float((fresh.spent_usd if fresh else 0.0) or 0.0)
         persisted = {row.candidate_id for row in (fresh.candidate_results if fresh else [])}
         for index, candidate in enumerate(candidates):
+            if self._cancel_if_requested(job, stage="candidate"):
+                return
             candidate_id = str(candidate.get("id", index))
             if candidate_id in completed_ids or candidate_id in persisted:
                 continue
             self._renew_lease(job, self._active_message)
+            self.repository.append_event(job.id, "TESTING", {"message": f"Testing candidate {candidate_id}", "candidateId": candidate_id}, event_id=f"{job.id}:testing:{candidate_id}")
             estimated = float(candidate.get("cost_usd", 0.0) or 0.0)
             if estimated < 0:
                 raise ValueError("candidate cost cannot be negative")
@@ -560,8 +599,12 @@ class WorkerRuntime:
             checkpoint = {"next_candidate_index": index + 1, "completed_candidate_ids": sorted(completed_ids)}
             if self.repository.record_candidate(job.id, candidate_id, result, cost, checkpoint, worker_id=self.worker_id, lease_token=self._lease_token, reserved_usd=estimated)[1] is False:
                 completed_ids.add(candidate_id)
+            self.repository.append_event(job.id, "INFO", {"message": f"Candidate {candidate_id} completed", "candidateId": candidate_id, "costUsd": cost}, event_id=f"{job.id}:completed:{candidate_id}")
+        if self._cancel_if_requested(job, stage="validation"):
+            return
         if self.repository.transition(job.id, JobState.VALIDATING, worker_id=self.worker_id, lease_token=self._lease_token) is None:
             raise LeaseLostError(job.id)
+        self.repository.append_event(job.id, "INFO", {"message": "Validating recommendation", "status": "VALIDATING"}, event_id=f"{job.id}:validating")
         final = self.repository.get(job.id)
         if self.repository.checkpoint(job.id, {**(final.checkpoint if final else {}), "next_candidate_index": len(candidates), "completed_candidate_ids": sorted(completed_ids)}, spent_usd=float(final.spent_usd if final else spent), worker_id=self.worker_id, lease_token=self._lease_token) is None:
             raise LeaseLostError(job.id)
@@ -641,8 +684,10 @@ class WorkerRuntime:
                 raise LeaseLostError(job.id)
             if self.repository.persist_optimization_result(job.id, recommendation, metadata={"candidate_count": len(rows), "stages": stage_payload, "statistical_gate": gate_payload}, worker_id=self.worker_id, lease_token=self._lease_token) is None:
                 raise LeaseLostError(job.id)
+            self.repository.append_event(job.id, "SELECTED", {"message": f"Selected candidate {chosen.id}", "candidateId": chosen.id, "status": "COMPLETED"}, event_id=f"{job.id}:selected")
         if self.repository.transition(job.id, JobState.COMPLETED, worker_id=self.worker_id, lease_token=self._lease_token) is None:
             raise LeaseLostError(job.id)
+        self.repository.append_event(job.id, "INFO", {"message": "Optimization completed", "status": "COMPLETED"}, event_id=f"{job.id}:completed")
 
     def _invoke_executor(self, candidate: dict[str, Any], job: Job) -> dict[str, Any] | float | int:
         try:

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import asyncio
 import os
 import re
 import time
@@ -1283,8 +1284,10 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
     def _run_payload(job: Job, *, include_events: bool = False) -> dict[str, Any]:
         payload = job.payload if isinstance(job.payload, dict) else {}
         result: dict[str, Any] = {
-            "runId": job.id, "run_id": job.id, "organizationId": job.organization_id,
-            "projectId": job.project_id, "kind": job.kind, "status": str(job.status).upper(),
+            "runId": job.id, "run_id": job.id, "organizationId": job.organization_id, "organization_id": job.organization_id,
+            # Legacy /optimizations callers consume lower-case state values;
+            # the frontend maps them to its display enum when needed.
+            "projectId": job.project_id, "project_id": job.project_id, "kind": job.kind, "status": str(job.status).lower(),
             "projectVersionId": job.project_version_id or payload.get("project_version_id"),
             "datasetId": job.dataset_id or payload.get("dataset_id"),
             "evalSuiteId": job.dataset_id or payload.get("dataset_id"),
@@ -1310,6 +1313,9 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
         project = _project_for_request(request=request, project_id=body.project_id, tenant=tenant, session=session)
         if body.dataset_id: _dataset_for_request(body.dataset_id, tenant=tenant, project=project, session=session)
         version = _version_for_run(project, body.project_version_id, tenant, session)
+        # The canonical API accepts the standard HTTP header as an equivalent
+        # to the JSON field so SDKs can retry without mutating their payload.
+        idempotency_key = body.idempotency_key or request.headers.get("Idempotency-Key")
         run_id = str(uuid4()); config = dict(body.config); config["max_experiment_cost_usd"] = body.max_experiment_cost_usd
         # Canonicalize the suite linkage inside config as well as the legacy
         # top-level payload field.  Consumers of the old browser route read
@@ -1326,7 +1332,7 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
             id=run_id, organization_id=tenant.organization_id, project_id=project.id, kind=kind,
             payload=payload, max_experiment_cost_usd=body.max_experiment_cost_usd,
             project_version_id=version.id if version else None, dataset_id=body.dataset_id,
-            idempotency_key=body.idempotency_key, objective=body.objective,
+            idempotency_key=idempotency_key, objective=body.objective,
             quality_tolerance_pp=body.quality_tolerance_pp, confidence_pct=body.confidence_pct,
             allowed_models=list(body.allowed_models or []),
         )
@@ -1338,11 +1344,11 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
             "allowedModels": body.allowed_models, "config": config,
             "maxExperimentCostUsd": body.max_experiment_cost_usd,
         }, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
-        if idem_cls is not None and body.idempotency_key:
+        if idem_cls is not None and idempotency_key:
             existing = session.scalar(select(idem_cls).where(
                 idem_cls.organization_id == tenant.organization_id,
                 idem_cls.operation == kind,
-                idem_cls.idempotency_key == body.idempotency_key,
+                idem_cls.idempotency_key == idempotency_key,
             ))
             if existing is not None:
                 if existing.request_hash != request_hash:
@@ -1351,21 +1357,21 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
                 if existing_job is not None:
                     return RunResponse(run_id=existing_job.id, status=existing_job.status)
         session.add(job)
-        if idem_cls is not None and body.idempotency_key:
+        if idem_cls is not None and idempotency_key:
             session.add(idem_cls(
                 organization_id=tenant.organization_id, project_id=project.id, operation=kind,
-                idempotency_key=body.idempotency_key, request_hash=request_hash, job_id=run_id,
+                idempotency_key=idempotency_key, request_hash=request_hash, job_id=run_id,
             ))
         _record_outbox(session, tenant, kind, run_id, f"{kind}.queued", {"job_id": run_id})
         try:
             session.commit()
         except IntegrityError as exc:
             session.rollback()
-            if idem_cls is not None and body.idempotency_key:
+            if idem_cls is not None and idempotency_key:
                 existing = session.scalar(select(idem_cls).where(
                     idem_cls.organization_id == tenant.organization_id,
                     idem_cls.operation == kind,
-                    idem_cls.idempotency_key == body.idempotency_key,
+                    idem_cls.idempotency_key == idempotency_key,
                 ))
                 if existing is not None:
                     if existing.request_hash != request_hash:
@@ -1427,6 +1433,45 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
     @app.get("/v1/optimizations/{run_id}", response_model=dict[str, Any], tags=["optimizations"])
     def get_optimization(run_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)): return _run_for_tenant(run_id, "optimization", tenant, session)
 
+    @app.get("/v1/projects/{project_id}/optimization-runs", response_model=dict[str, Any], tags=["optimizations"])
+    def list_optimization_runs(
+        project_id: str,
+        limit: int = Query(default=50, ge=1, le=100),
+        tenant: Tenant = Depends(get_tenant),
+        session: Session = Depends(get_session),
+    ) -> dict[str, Any]:
+        project = _project_reference(project_id, tenant=tenant, session=session)
+        jobs = session.scalars(
+            select(Job).where(
+                Job.organization_id == tenant.organization_id,
+                Job.project_id == project.id,
+                Job.kind == "optimization",
+            ).order_by(desc(Job.created_at)).limit(limit)
+        ).all()
+        return {"data": [_run_payload(job) for job in jobs], "runs": [_run_payload(job) for job in jobs], "page": {"nextCursor": None}}
+
+    @app.get("/v1/optimization-runs/{run_id}", response_model=dict[str, Any], tags=["optimizations"])
+    def frontend_optimization_status(run_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        job = session.scalar(select(Job).where(Job.id == run_id, Job.organization_id == tenant.organization_id, Job.kind == "optimization"))
+        if job is None or (tenant.project_id and job.project_id != tenant.project_id):
+            raise HTTPException(status_code=404, detail="Optimization run not found")
+        return _run_payload(job, include_events=True)
+
+    @app.post("/v1/optimization-runs/{run_id}/cancel", response_model=dict[str, Any], tags=["optimizations"])
+    def cancel_optimization(run_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        job = session.scalar(select(Job).where(Job.id == run_id, Job.organization_id == tenant.organization_id, Job.kind == "optimization"))
+        if job is None or (tenant.project_id and job.project_id != tenant.project_id):
+            raise HTTPException(status_code=404, detail="Optimization run not found")
+        if job.status not in {"completed", "failed", "cancelled"}:
+            if job.status == "queued":
+                job.status = "cancelled"
+                job.completed_at = datetime.now(timezone.utc)
+            else:
+                job.cancel_requested_at = datetime.now(timezone.utc)
+            session.commit()
+            _append_optimization_event(run_id, tenant, job.project_id, "INFO", {"message": "Cancellation requested", "status": "CANCEL_REQUESTED"}, session, event_id=f"{run_id}:cancel-requested")
+        return _run_payload(session.get(Job, run_id), include_events=False)
+
     @app.get("/v1/eval-runs/{run_id}/cases", response_model=dict[str, Any], tags=["evals"])
     def frontend_eval_cases(run_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
         run = _run_for_tenant(run_id, "optimization", tenant, session)
@@ -1456,11 +1501,67 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
         return {"candidates": rows, "page": {"nextCursor": None}}
 
     @app.get("/v1/optimization-runs/{run_id}/events", response_model=dict[str, Any], tags=["optimizations"])
-    def frontend_optimization_events(run_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
-        run = _run_for_tenant(run_id, "optimization", tenant, session)
-        result = run.get("result") or {}
-        events = result.get("events", []) if isinstance(result, dict) else []
-        return {"events": events if isinstance(events, list) else [], "page": {"nextCursor": None}}
+    def frontend_optimization_events(
+        run_id: str,
+        after: int = Query(default=0, ge=0),
+        last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+        tenant: Tenant = Depends(get_tenant),
+        session: Session = Depends(get_session),
+    ) -> dict[str, Any]:
+        job = session.scalar(select(Job).where(Job.id == run_id, Job.organization_id == tenant.organization_id, Job.kind == "optimization"))
+        if job is None or (tenant.project_id and job.project_id != tenant.project_id):
+            raise HTTPException(status_code=404, detail="Optimization run not found")
+        try:
+            cursor = max(after, int(last_event_id or 0))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Last-Event-ID must be numeric") from exc
+        event_cls = getattr(api_models, "OptimizationEvent", None)
+        rows = session.scalars(select(event_cls).where(event_cls.job_id == run_id, event_cls.sequence > cursor).order_by(event_cls.sequence).limit(500)).all() if event_cls is not None else []
+        events = [{"id": row.event_id, "sequence": row.sequence, "type": row.event_type, "timestamp": row.created_at.isoformat(), **(row.payload or {})} for row in rows]
+        # Keep the browser's existing collection envelope; event replay uses
+        # Last-Event-ID/`after`, while regular cursor pagination remains null.
+        return {"events": events, "data": events, "status": str(job.status).upper(), "lastEventId": events[-1]["sequence"] if events else cursor, "page": {"nextCursor": None}}
+
+    @app.get("/v1/optimization-runs/{run_id}/events/stream", tags=["optimizations"])
+    def frontend_optimization_event_stream(
+        run_id: str,
+        request: Request,
+        last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+        tenant: Tenant = Depends(get_tenant),
+        session: Session = Depends(get_session),
+    ) -> StreamingResponse:
+        job = session.scalar(select(Job).where(Job.id == run_id, Job.organization_id == tenant.organization_id, Job.kind == "optimization"))
+        if job is None or (tenant.project_id and job.project_id != tenant.project_id):
+            raise HTTPException(status_code=404, detail="Optimization run not found")
+        try:
+            start_cursor = int(last_event_id or 0)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Last-Event-ID must be numeric") from exc
+        factory = app.state.session_factory
+
+        async def stream():
+            cursor = max(0, start_cursor)
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                if await request.is_disconnected():
+                    return
+                with factory() as stream_session:
+                    current = stream_session.scalar(select(Job).where(Job.id == run_id, Job.organization_id == tenant.organization_id, Job.kind == "optimization"))
+                    event_cls = getattr(api_models, "OptimizationEvent", None)
+                    rows = stream_session.scalars(select(event_cls).where(event_cls.job_id == run_id, event_cls.sequence > cursor).order_by(event_cls.sequence).limit(500)).all() if event_cls is not None else []
+                    for row in rows:
+                        cursor = row.sequence
+                        payload = {"id": row.event_id, "sequence": row.sequence, "type": row.event_type, "timestamp": row.created_at.isoformat(), **(row.payload or {})}
+                        yield f"id: {row.sequence}\nevent: optimization\ndata: {json.dumps(payload, separators=(',', ':'))}\n\n"
+                    if current is not None and str(current.status) in {"completed", "failed", "cancelled"}:
+                        yield f"event: terminal\ndata: {json.dumps({'status': str(current.status).upper()})}\n\n"
+                        return
+                yield ": heartbeat\n\n"
+                await asyncio.sleep(1)
+
+        # The async generator keeps the event loop responsive during the
+        # bounded polling window; clients reconnect using event IDs.
+        return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     @app.post("/v1/optimization-runs/{run_id}/select", response_model=dict[str, Any], tags=["optimizations"])
     def select_frontend_candidate(run_id: str, payload: dict[str, Any], tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
