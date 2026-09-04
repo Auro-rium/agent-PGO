@@ -4,9 +4,8 @@
   opacity: 1;
   background: radial-gradient(circle at 50% 28%, #17191b 0, #070707 52%, #000 100%);
 }
-/* The source video contains bright moving light bars that compete with pricing copy.
-   Keep the nocturnal texture, but make section pages calm and readable. */
-.vesper-route-page .vesper-photo video { visibility: hidden; }
+/* Section pages intentionally use a static texture: animated light bars compete with pricing copy. */
+.vesper-route-page .vesper-photo video { display: none !important; }
 .vesper-route-header { position: sticky; top: 0; background: linear-gradient(180deg, rgba(0,0,0,.94), rgba(0,0,0,.58), transparent); backdrop-filter: blur(10px); }
 .vesper-route-main { position: relative; z-index: 1; }
 .vesper-route-hero { max-width: 930px; margin: 0 auto; padding: 130px 40px 115px; text-align: center; }
