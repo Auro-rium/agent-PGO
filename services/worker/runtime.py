@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 import inspect
+import math
 import os
 from threading import Event, Lock, Thread
 from typing import Any, Callable
@@ -18,7 +19,10 @@ from uuid import uuid4
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
-from apps.api.models import Job, JobCandidateResult, OptimizationResult, utc_now
+from apps.api.models import (
+    EvalCase, EvalDataset, EvalRun, EvalRunCase,
+    Job, JobCandidateResult, OptimizationResult, utc_now,
+)
 
 from .queue import QueueConsumer, QueueMessage
 
@@ -380,7 +384,80 @@ class JobRepository:
 
 
 
+    def evaluation_context(self, job_id: str, *, worker_id: str, lease_token: Any | None) -> dict[str, Any]:
+        """Return a detached snapshot of the immutable suite for one run."""
+        with self.session_factory.begin() as session:
+            job = session.get(Job, job_id, with_for_update=True)
+            if job is None or job.kind != "evaluation" or not self._lease_matches(job, worker_id, lease_token):
+                raise LeaseLostError(job_id)
+            payload = job.payload if isinstance(job.payload, dict) else {}
+            run_id = str(payload.get("eval_run_id") or job.id)
+            run = session.get(EvalRun, run_id, with_for_update=True)
+            if run is None:
+                raise ValueError(f"evaluation run not found: {run_id}")
+            dataset_id = str(run.eval_suite_id or payload.get("eval_suite_id") or job.dataset_id or "")
+            dataset = session.get(EvalDataset, dataset_id)
+            if dataset is None:
+                raise ValueError(f"evaluation dataset not found: {dataset_id}")
+            dataset_cases = {case.case_id: case for case in session.scalars(select(EvalCase).where(EvalCase.dataset_id == dataset.id)).all()}
+            rows = list(session.scalars(select(EvalRunCase).where(EvalRunCase.eval_run_id == run.id).order_by(EvalRunCase.ordinal, EvalRunCase.id)).all())
+            if not rows:
+                rows = [EvalRunCase(eval_run_id=run.id, case_id=case.case_id, ordinal=case.ordinal) for case in dataset.cases]
+                session.add_all(rows)
+                session.flush()
+            if run.status not in {"completed", "failed", "cancelled"}:
+                run.status = "running"
+                run.started_at = run.started_at or utc_now()
+                run.error = None
+            cases = []
+            for row in rows:
+                source = dataset_cases.get(row.case_id)
+                if source is None:
+                    raise ValueError(f"evaluation case not found: {row.case_id}")
+                cases.append({"case_id": row.case_id, "input": source.input_data, "expected": source.expected, "metadata": source.metadata_json or {}, "ordinal": row.ordinal, "status": row.status})
+            session.flush()
+            return {"run_id": run.id, "organization_id": run.organization_id, "project_id": run.project_id, "candidate": dict(run.candidate_config or {}), "cases": cases}
+
+    def persist_evaluation_case(self, job_id: str, run_id: str, case_id: str, *, status: str, score: float | None = None, passed: bool | None = None, latency_ms: float | None = None, evidence: dict[str, Any] | None = None, worker_id: str, lease_token: Any | None) -> EvalRunCase | None:
+        with self.session_factory.begin() as session:
+            job = session.get(Job, job_id, with_for_update=True)
+            if job is None or job.kind != "evaluation" or not self._lease_matches(job, worker_id, lease_token):
+                return None
+            run = session.get(EvalRun, run_id, with_for_update=True)
+            if run is None:
+                return None
+            row = session.scalar(select(EvalRunCase).where(EvalRunCase.eval_run_id == run_id, EvalRunCase.case_id == case_id).with_for_update())
+            if row is None:
+                row = EvalRunCase(eval_run_id=run_id, case_id=case_id)
+                session.add(row)
+            row.status = str(status)
+            row.score = score
+            row.passed = passed
+            row.latency_ms = latency_ms
+            row.evidence = dict(evidence or {})
+            session.flush()
+            return row
+
+    def finish_evaluation(self, job_id: str, run_id: str, *, status: str, aggregate_metrics: dict[str, Any] | None = None, error: str | None = None, worker_id: str, lease_token: Any | None) -> EvalRun | None:
+        with self.session_factory.begin() as session:
+            job = session.get(Job, job_id, with_for_update=True)
+            if job is None or job.kind != "evaluation" or not self._lease_matches(job, worker_id, lease_token):
+                return None
+            run = session.get(EvalRun, run_id, with_for_update=True)
+            if run is None:
+                return None
+            run.status = str(status)
+            run.error = error[:4000] if error else None
+            if aggregate_metrics is not None:
+                run.aggregate_metrics = dict(aggregate_metrics)
+            if run.status in {"completed", "failed", "cancelled"}:
+                run.completed_at = utc_now()
+            session.flush()
+            return run
+
+
 CandidateExecutor = Callable[..., dict[str, Any] | float | int]
+EvaluationExecutor = Callable[..., Any]
 
 
 class WorkerRuntime:
@@ -392,6 +469,7 @@ class WorkerRuntime:
         worker_id: str | None = None,
         candidate_executor: CandidateExecutor | None = None,
         execute_candidate: CandidateExecutor | None = None,
+        evaluation_executor: EvaluationExecutor | None = None,
         lease_seconds: int = 60,
         visibility_timeout: int = 60,
         max_receive_count: int = 3,
@@ -403,6 +481,7 @@ class WorkerRuntime:
         self.queue = queue
         self.worker_id = worker_id or f"worker-{uuid4()}"
         self.candidate_executor = candidate_executor or execute_candidate or self._default_candidate_executor
+        self.evaluation_executor = evaluation_executor or self._default_evaluation_executor
         self.lease_seconds = max(1, int(lease_seconds))
         self.visibility_timeout = max(0, min(int(visibility_timeout), 43_200))
         self.max_receive_count = max(1, int(max_receive_count))
@@ -417,6 +496,17 @@ class WorkerRuntime:
     @staticmethod
     def _default_candidate_executor(candidate: dict[str, Any], _job: Job) -> dict[str, Any]:
         return dict(candidate)
+
+    @staticmethod
+    def _default_evaluation_executor(_case: dict[str, Any], _candidate: dict[str, Any], _job: dict[str, Any]) -> Any:
+        raise RuntimeError(
+            "evaluation executor is not configured; refusing to publish an "
+            "unverified evaluation result"
+        )
+
+    @staticmethod
+    def _store_content() -> bool:
+        return os.getenv("AGENTPGO_STORE_CONTENT", "").lower() in {"1", "true", "yes"}
 
     @staticmethod
     def _quality_samples(value: Any) -> tuple[float, ...] | None:
@@ -466,9 +556,13 @@ class WorkerRuntime:
         try:
             self._execute(job)
         except SpendLimitExceeded as exc:
+            if job.kind == "evaluation":
+                self._fail_evaluation_run(job, str(exc))
             self.repository.transition(job.id, JobState.FAILED, worker_id=self.worker_id, lease_token=self._lease_token, error=str(exc))
         except Exception as exc:
             if message.receive_count >= self.max_receive_count or job.attempt_count >= job.max_attempts:
+                if job.kind == "evaluation":
+                    self._fail_evaluation_run(job, str(exc))
                 self.repository.transition(job.id, JobState.FAILED, worker_id=self.worker_id, lease_token=self._lease_token, error=str(exc))
                 self.queue.move_to_dlq(message)
             else:
@@ -479,6 +573,11 @@ class WorkerRuntime:
         self._active_message = None
         self._lease_token = None
         return True
+
+    def _fail_evaluation_run(self, job: Job, error: str) -> None:
+        payload = job.payload if isinstance(job.payload, dict) else {}
+        run_id = str(payload.get("eval_run_id") or job.id)
+        self.repository.finish_evaluation(job.id, run_id, status="failed", error=error, worker_id=self.worker_id, lease_token=self._lease_token)
 
     def _extend_visibility(self, message: QueueMessage) -> None:
         extender = getattr(self.queue, "extend_visibility", None)
@@ -545,6 +644,9 @@ class WorkerRuntime:
                 raise LeaseLostError(job.id)
             if self.repository.transition(job.id, JobState.COMPLETED, worker_id=self.worker_id, lease_token=self._lease_token) is None:
                 raise LeaseLostError(job.id)
+            return
+        if job.kind == "evaluation":
+            self._execute_evaluation(job)
             return
         config = payload.get("config")
         if isinstance(config, dict):
@@ -688,6 +790,151 @@ class WorkerRuntime:
         if self.repository.transition(job.id, JobState.COMPLETED, worker_id=self.worker_id, lease_token=self._lease_token) is None:
             raise LeaseLostError(job.id)
         self.repository.append_event(job.id, "INFO", {"message": "Optimization completed", "status": "COMPLETED"}, event_id=f"{job.id}:completed")
+
+    def _invoke_evaluation_executor(self, case: dict[str, Any], candidate: dict[str, Any], job: dict[str, Any]) -> Any:
+        executor = self.evaluation_executor
+        # RunnerExecutor.execute uses wire order (candidate, job, case), while
+        # the injectable runtime callback uses the ergonomic (case, candidate,
+        # job) order.  Detect the concrete seam and preserve both contracts.
+        owner = getattr(executor, "__self__", None)
+        if owner is not None and owner.__class__.__name__ == "RunnerExecutor":
+            return executor(candidate, job, case)
+        try:
+            parameters = list(inspect.signature(executor).parameters.values())
+            if len(parameters) == 1:
+                return executor(case)
+            if len(parameters) == 2:
+                return executor(case, candidate)
+        except (TypeError, ValueError):
+            pass
+        return executor(case, candidate, job)
+
+    @staticmethod
+    def _normalise_evaluation_result(value: Any) -> dict[str, Any]:
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            value = {"score": value}
+        elif not isinstance(value, dict):
+            # RunnerResult is intentionally a small dataclass, but accepting
+            # attributes keeps the runtime seam independent of its transport.
+            value = vars(value) if hasattr(value, "__dict__") else None
+        if not isinstance(value, dict):
+            raise TypeError("evaluation executor must return a mapping, number, or RunnerResult")
+        score_value = value.get("score", value.get("quality"))
+        try:
+            score = float(score_value)
+            latency = float(value.get("latency_ms", 0.0) or 0.0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("evaluation score and latency must be numeric") from exc
+        if not math.isfinite(score) or not 0.0 <= score <= 1.0:
+            raise ValueError("evaluation score must be between 0 and 1")
+        if not math.isfinite(latency) or latency < 0:
+            raise ValueError("evaluation latency must be a non-negative number")
+        passed = value.get("passed")
+        if passed is not None and not isinstance(passed, bool):
+            raise ValueError("evaluation passed must be boolean when provided")
+        usage = value.get("usage") if isinstance(value.get("usage"), dict) else {}
+        def nonnegative_number(name: str) -> float:
+            try:
+                result = float(usage.get(name, value.get(name, 0.0)) or 0.0)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"evaluation {name} must be numeric") from exc
+            if not math.isfinite(result) or result < 0:
+                raise ValueError(f"evaluation {name} must be non-negative")
+            return result
+        def nonnegative_int(name: str) -> int:
+            result = int(usage.get(name, value.get(name, 0)) or 0)
+            if result < 0:
+                raise ValueError(f"evaluation {name} must be non-negative")
+            return result
+        return {
+            "score": score,
+            "latency_ms": latency,
+            "passed": passed,
+            "output": value.get("output", "[REDACTED]"),
+            "input_tokens": nonnegative_int("input_tokens"),
+            "output_tokens": nonnegative_int("output_tokens"),
+            "cost_usd": nonnegative_number("cost_usd"),
+            "provider_request_id": str(value["provider_request_id"]) if value.get("provider_request_id") else None,
+        }
+
+    def _evaluation_aggregate(self, run_id: str) -> dict[str, Any]:
+        with self.repository.session_factory() as session:
+            rows = list(session.scalars(select(EvalRunCase).where(EvalRunCase.eval_run_id == run_id).order_by(EvalRunCase.ordinal, EvalRunCase.id)).all())
+        completed = [row for row in rows if str(row.status).lower() in {"completed", "passed"}]
+        scores = [float(row.score) for row in completed if row.score is not None]
+        latencies = [float(row.latency_ms) for row in completed if row.latency_ms is not None]
+        passed_values = [row.passed for row in completed if row.passed is not None]
+        total_cost = 0.0
+        input_tokens = output_tokens = 0
+        for row in completed:
+            evidence = row.evidence if isinstance(row.evidence, dict) else {}
+            total_cost += float(evidence.get("cost_usd", 0.0) or 0.0)
+            input_tokens += int(evidence.get("input_tokens", 0) or 0)
+            output_tokens += int(evidence.get("output_tokens", 0) or 0)
+        mean_score = (sum(scores) / len(scores)) if scores else None
+        mean_latency = (sum(latencies) / len(latencies)) if latencies else None
+        p95_latency = sorted(latencies)[max(0, math.ceil(len(latencies) * 0.95) - 1)] if latencies else None
+        passed_count = sum(1 for value in passed_values if value)
+        metrics = {
+            "total_cases": len(rows),
+            "case_count": len(rows),
+            "completed_cases": len(completed),
+            "completed_case_count": len(completed),
+            "failed_cases": sum(1 for row in rows if str(row.status).lower() == "failed"),
+            "passed_cases": passed_count,
+            "passed_case_count": passed_count,
+            "pass_rate": (passed_count / len(passed_values)) if passed_values else None,
+            "mean_score": mean_score,
+            "average_score": mean_score,
+            "mean_latency_ms": mean_latency,
+            "average_latency_ms": mean_latency,
+            "p95_latency_ms": p95_latency,
+            "total_cost_usd": total_cost,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+        }
+        return metrics
+
+    def _execute_evaluation(self, claimed: Job) -> None:
+        if self.repository.transition(claimed.id, JobState.EVALUATING, worker_id=self.worker_id, lease_token=self._lease_token) is None:
+            raise LeaseLostError(claimed.id)
+        context = self.repository.evaluation_context(claimed.id, worker_id=self.worker_id, lease_token=self._lease_token)
+        run_id = context["run_id"]
+        candidate = context["candidate"]
+        job_wire = {"id": run_id, "organization_id": context["organization_id"], "project_id": context["project_id"]}
+        for case in context["cases"]:
+            if str(case.get("status", "pending")).lower() in {"completed", "passed"}:
+                continue
+            self._renew_lease(claimed, self._active_message)
+            try:
+                raw = self._invoke_evaluation_executor(case, candidate, job_wire)
+                result = self._normalise_evaluation_result(raw)
+            except Exception as exc:
+                # Persist a bounded failure marker so operators can identify the
+                # case, while process_once retains its normal retry policy.
+                evidence = {"error": str(exc)[:1000]}
+                if self.repository.persist_evaluation_case(claimed.id, run_id, case["case_id"], status="failed", evidence=evidence, worker_id=self.worker_id, lease_token=self._lease_token) is None:
+                    raise LeaseLostError(claimed.id)
+                raise
+            evidence = {
+                "score": result["score"],
+                "latency_ms": result["latency_ms"],
+                "output": result["output"] if self._store_content() else "[REDACTED]",
+                "input_tokens": result["input_tokens"],
+                "output_tokens": result["output_tokens"],
+                "cost_usd": result["cost_usd"],
+            }
+            if result["provider_request_id"]:
+                evidence["provider_request_id"] = result["provider_request_id"]
+            if self.repository.persist_evaluation_case(claimed.id, run_id, case["case_id"], status="completed", score=result["score"], passed=result["passed"], latency_ms=result["latency_ms"], evidence=evidence, worker_id=self.worker_id, lease_token=self._lease_token) is None:
+                raise LeaseLostError(claimed.id)
+        metrics = self._evaluation_aggregate(run_id)
+        if self.repository.set_result(claimed.id, {"evaluation": metrics}, worker_id=self.worker_id, lease_token=self._lease_token) is None:
+            raise LeaseLostError(claimed.id)
+        if self.repository.finish_evaluation(claimed.id, run_id, status="completed", aggregate_metrics=metrics, worker_id=self.worker_id, lease_token=self._lease_token) is None:
+            raise LeaseLostError(claimed.id)
+        if self.repository.transition(claimed.id, JobState.COMPLETED, worker_id=self.worker_id, lease_token=self._lease_token) is None:
+            raise LeaseLostError(claimed.id)
 
     def _invoke_executor(self, candidate: dict[str, Any], job: Job) -> dict[str, Any] | float | int:
         try:

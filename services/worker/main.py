@@ -8,6 +8,7 @@ from typing import Sequence
 from apps.api.db import create_session_factory
 
 from .queue import InMemoryQueue, SQSQueueConsumer
+from .runner import RunnerExecutor
 from .runtime import WorkerRuntime
 
 
@@ -27,6 +28,13 @@ def _unconfigured_candidate_executor(candidate: dict, _job: object) -> dict:
     )
 
 
+def _unconfigured_evaluation_executor(_case: dict, _candidate: dict, _job: dict) -> dict:
+    raise RuntimeError(
+        "evaluation executor is not configured; set RUNNER_ENDPOINT and "
+        "RUNNER_SIGNING_SECRET before processing evaluation jobs"
+    )
+
+
 def build_runtime() -> WorkerRuntime:
     factory = create_session_factory(os.getenv("DATABASE_URL"))
     queue_url = os.getenv("SQS_QUEUE_URL")
@@ -34,11 +42,22 @@ def build_runtime() -> WorkerRuntime:
         queue = SQSQueueConsumer(queue_url, dlq_url=os.getenv("SQS_DLQ_URL"))
     else:
         queue = InMemoryQueue()
+    runner_endpoint = os.getenv("RUNNER_ENDPOINT")
+    runner_secret = os.getenv("RUNNER_SIGNING_SECRET")
+    if runner_endpoint and runner_secret:
+        evaluation_executor = RunnerExecutor(
+            runner_endpoint,
+            signing_secret=runner_secret,
+            store_content=os.getenv("AGENTPGO_STORE_CONTENT", "").lower() in {"1", "true", "yes"},
+        ).execute
+    else:
+        evaluation_executor = _unconfigured_evaluation_executor
     return WorkerRuntime(
         factory,
         queue,
         worker_id=os.getenv("WORKER_ID"),
         candidate_executor=_unconfigured_candidate_executor,
+        evaluation_executor=evaluation_executor,
         lease_seconds=int(os.getenv("WORKER_LEASE_SECONDS", "60")),
         visibility_timeout=int(os.getenv("SQS_VISIBILITY_TIMEOUT", "60")),
         max_receive_count=int(os.getenv("SQS_MAX_RECEIVE_COUNT", "3")),
