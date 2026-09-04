@@ -418,6 +418,30 @@ class JobRepository:
             session.flush()
             return {"run_id": run.id, "organization_id": run.organization_id, "project_id": run.project_id, "candidate": dict(run.candidate_config or {}), "cases": cases}
 
+    def mark_evaluation_case_running(self, job_id: str, run_id: str, case_id: str, execution_key: str, *, worker_id: str, lease_token: Any | None) -> EvalRunCase | None:
+        """Durably claim a provider execution before dispatching it.
+
+        The execution key is stable for a run/case pair so a customer runner
+        can deduplicate retries after a worker crash.
+        """
+        with self.session_factory.begin() as session:
+            job = session.get(Job, job_id, with_for_update=True)
+            if job is None or job.kind != "evaluation" or not self._lease_matches(job, worker_id, lease_token):
+                return None
+            run = session.get(EvalRun, run_id, with_for_update=True)
+            if run is None:
+                return None
+            row = session.scalar(select(EvalRunCase).where(EvalRunCase.eval_run_id == run_id, EvalRunCase.case_id == case_id).with_for_update())
+            if row is None:
+                row = EvalRunCase(eval_run_id=run_id, case_id=case_id)
+                session.add(row)
+            evidence = dict(row.evidence or {})
+            evidence.update({"execution_key": execution_key, "attempted_at": utc_now().isoformat()})
+            row.status = "running"
+            row.evidence = evidence
+            session.flush()
+            return row
+
     def persist_evaluation_case(self, job_id: str, run_id: str, case_id: str, *, status: str, score: float | None = None, passed: bool | None = None, latency_ms: float | None = None, evidence: dict[str, Any] | None = None, worker_id: str, lease_token: Any | None) -> EvalRunCase | None:
         with self.session_factory.begin() as session:
             job = session.get(Job, job_id, with_for_update=True)
@@ -793,12 +817,11 @@ class WorkerRuntime:
 
     def _invoke_evaluation_executor(self, case: dict[str, Any], candidate: dict[str, Any], job: dict[str, Any]) -> Any:
         executor = self.evaluation_executor
-        # RunnerExecutor.execute uses wire order (candidate, job, case), while
-        # the injectable runtime callback uses the ergonomic (case, candidate,
-        # job) order.  Detect the concrete seam and preserve both contracts.
-        owner = getattr(executor, "__self__", None)
-        if owner is not None and owner.__class__.__name__ == "RunnerExecutor":
-            return executor(candidate, job, case)
+        # Production adapters expose an explicit execute(candidate, job, case)
+        # protocol. Plain test callbacks retain the ergonomic case-first form.
+        method = getattr(executor, "execute", None)
+        if callable(method):
+            return method(candidate, job, case)
         try:
             parameters = list(inspect.signature(executor).parameters.values())
             if len(parameters) == 1:
@@ -842,9 +865,9 @@ class WorkerRuntime:
                 raise ValueError(f"evaluation {name} must be non-negative")
             return result
         def nonnegative_int(name: str) -> int:
-            result = int(usage.get(name, value.get(name, 0)) or 0)
-            if result < 0:
-                raise ValueError(f"evaluation {name} must be non-negative")
+            result = usage.get(name, value.get(name, 0))
+            if isinstance(result, bool) or not isinstance(result, int) or result < 0:
+                raise ValueError(f"evaluation {name} must be a non-negative integer")
             return result
         return {
             "score": score,
@@ -905,18 +928,24 @@ class WorkerRuntime:
         for case in context["cases"]:
             if str(case.get("status", "pending")).lower() in {"completed", "passed"}:
                 continue
+            execution_key = f"{run_id}:{case['case_id']}"
             self._renew_lease(claimed, self._active_message)
+            if self.repository.mark_evaluation_case_running(claimed.id, run_id, case["case_id"], execution_key, worker_id=self.worker_id, lease_token=self._lease_token) is None:
+                raise LeaseLostError(claimed.id)
+            dispatch_case = dict(case)
+            dispatch_case["execution_key"] = execution_key
             try:
-                raw = self._invoke_evaluation_executor(case, candidate, job_wire)
+                raw = self._invoke_evaluation_executor(dispatch_case, candidate, job_wire)
                 result = self._normalise_evaluation_result(raw)
             except Exception as exc:
                 # Persist a bounded failure marker so operators can identify the
                 # case, while process_once retains its normal retry policy.
-                evidence = {"error": str(exc)[:1000]}
+                evidence = {"execution_key": execution_key, "error": str(exc)[:1000]}
                 if self.repository.persist_evaluation_case(claimed.id, run_id, case["case_id"], status="failed", evidence=evidence, worker_id=self.worker_id, lease_token=self._lease_token) is None:
                     raise LeaseLostError(claimed.id)
                 raise
             evidence = {
+                "execution_key": execution_key,
                 "score": result["score"],
                 "latency_ms": result["latency_ms"],
                 "output": result["output"] if self._store_content() else "[REDACTED]",
