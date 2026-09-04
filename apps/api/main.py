@@ -701,8 +701,13 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
         organization_id = membership.organization_id
         code = session.scalar(select(ReferralCode).where(ReferralCode.organization_id == organization_id, ReferralCode.active.is_(True)))
         rows = list(session.scalars(select(Referral).where(Referral.referrer_organization_id == organization_id).order_by(Referral.created_at.desc())).all())
+        summary = referral_summary(session, organization_id=organization_id)
+        referral_code = code.code if code else None
+        app_origin = (os.getenv("APP_ORIGIN") or DEFAULT_APP_ORIGIN).rstrip("/")
         return {
-            "code": code.code if code else None,
+            "code": referral_code,
+            "referralCode": referral_code,
+            "referralLink": f"{app_origin}/signup?ref={referral_code}" if referral_code else None,
             "referrals": [
                 {
                     "id": row.id,
@@ -715,7 +720,12 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
                 }
                 for row in rows
             ],
-            "summary": referral_summary(session, organization_id=organization_id),
+            "summary": summary,
+            # Flat aliases are the shape consumed by the account surface.
+            **summary,
+            "freeProMonths": sum(
+                1 for row in rows for reward in row.rewards if reward.status == "REWARDED"
+            ),
         }
 
     @app.post("/v1/referrals/validate", tags=["referrals"])
@@ -726,9 +736,17 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
     @app.get("/v1/entitlements", tags=["billing"])
     def entitlements(tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
         snapshot = _entitlement_snapshot(tenant.organization_id, session)
-        snapshot["referrals"] = referral_summary(session, organization_id=tenant.organization_id)
+        summary = referral_summary(session, organization_id=tenant.organization_id)
+        snapshot["referrals"] = summary
         code = session.scalar(select(ReferralCode).where(ReferralCode.organization_id == tenant.organization_id, ReferralCode.active.is_(True)))
         snapshot["referralCode"] = code.code if code else None
+        # The browser account surface historically called this field
+        # ``planStatus``. Keep the canonical lower-case status as well so old
+        # SDKs and the current client can consume one response.
+        snapshot["planStatus"] = snapshot["status"]
+        snapshot["pendingReferrals"] = summary["pending"]
+        snapshot["qualifiedReferrals"] = summary["qualified"]
+        snapshot["earnedRewards"] = summary["rewarded"]
         return snapshot
 
     @app.post("/v1/auth/signin", tags=["auth"])
@@ -1035,9 +1053,9 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
         project = _project_reference(str(dataset.project_id), tenant=tenant, session=session)
         version = None
         if body.project_version_id:
-            version = session.scalar(select(ProjectVersion).where(ProjectVersion.id == body.project_version_id, ProjectVersion.project_id == project.id, ProjectVersion.organization_id == tenant.organization_id))
-            if version is None:
-                raise HTTPException(status_code=404, detail="Project version not found")
+            # Browser clients may retain the human version label (for example
+            # ``v1``) while the run foreign key requires the immutable UUID.
+            version = _version_for_run(project, body.project_version_id, tenant, session)
         selected_cases = list(dataset.cases[: body.sample_count] if body.sample_count else dataset.cases)
         if not selected_cases:
             raise HTTPException(status_code=422, detail="Evaluation suite must contain at least one case")
@@ -1061,6 +1079,26 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
     @app.get("/v1/eval-runs/{run_id}", response_model=dict[str, Any], tags=["evals"])
     def eval_run_status(run_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
         return _serialize_eval_run(_eval_run_for_tenant(run_id, tenant=tenant, session=session))
+
+    @app.get("/v1/projects/{project_id}/eval-runs", response_model=dict[str, Any], tags=["evals"])
+    def list_project_eval_runs(
+        project_id: str,
+        limit: int = Query(default=50, ge=1, le=100),
+        tenant: Tenant = Depends(get_tenant),
+        session: Session = Depends(get_session),
+    ) -> dict[str, Any]:
+        project = _project_reference(project_id, tenant=tenant, session=session)
+        run_cls = _model("EvalRun")
+        runs = session.scalars(
+            select(run_cls)
+            .where(
+                run_cls.organization_id == tenant.organization_id,
+                run_cls.project_id == project.id,
+            )
+            .order_by(desc(run_cls.created_at), desc(run_cls.id))
+            .limit(limit)
+        ).all()
+        return {"data": [_serialize_eval_run(run) for run in runs], "page": {"nextCursor": None}}
 
     @app.get("/v1/eval-runs/{run_id}/cases", response_model=dict[str, Any], tags=["evals"])
     def eval_run_cases(run_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session), limit: int = Query(default=100, ge=1, le=1000)) -> dict[str, Any]:
@@ -1407,6 +1445,11 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
         if app.state.queue_publisher is not None: app.state.queue_publisher.publish(run_id, {"kind": "profile"})
         return {"run_id": run_id, "status": "queued"}
 
+    @app.get("/v1/profiles/{profile_id}", response_model=dict[str, Any], tags=["profile"])
+    def get_profile(profile_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
+        """Read one durable profile job without crossing organization/project scope."""
+        return _run_for_tenant(profile_id, "profile", tenant, session)
+
     @app.post("/v1/evals", response_model=dict[str, Any], status_code=201, tags=["evals"])
     def create_eval(body: EvalCreate, request: Request, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)) -> dict[str, Any]:
         project = _project_for_request(request=request, project_id=body.project_id, tenant=tenant, session=session)
@@ -1714,6 +1757,8 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
     def frontend_optimization_events(
         run_id: str,
         after: int = Query(default=0, ge=0),
+        cursor: str | None = Query(default=None, max_length=64),
+        limit: int = Query(default=100, ge=1, le=500),
         last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
         tenant: Tenant = Depends(get_tenant),
         session: Session = Depends(get_session),
@@ -1722,15 +1767,26 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
         if job is None or (tenant.project_id and job.project_id != tenant.project_id):
             raise HTTPException(status_code=404, detail="Optimization run not found")
         try:
-            cursor = max(after, int(last_event_id or 0))
+            replay_cursors = [after]
+            if cursor is not None:
+                replay_cursors.append(int(cursor))
+            if last_event_id:
+                replay_cursors.append(int(last_event_id))
+            start_cursor = max(replay_cursors)
         except ValueError as exc:
-            raise HTTPException(status_code=422, detail="Last-Event-ID must be numeric") from exc
+            raise HTTPException(status_code=422, detail="Event cursor must be numeric") from exc
         event_cls = getattr(api_models, "OptimizationEvent", None)
-        rows = session.scalars(select(event_cls).where(event_cls.job_id == run_id, event_cls.sequence > cursor).order_by(event_cls.sequence).limit(500)).all() if event_cls is not None else []
+        rows = session.scalars(
+            select(event_cls)
+            .where(event_cls.job_id == run_id, event_cls.sequence > start_cursor)
+            .order_by(event_cls.sequence)
+            .limit(limit + 1)
+        ).all() if event_cls is not None else []
+        has_more = len(rows) > limit
+        rows = rows[:limit]
         events = [{"id": row.event_id, "sequence": row.sequence, "type": row.event_type, "timestamp": row.created_at.isoformat(), **(row.payload or {})} for row in rows]
-        # Keep the browser's existing collection envelope; event replay uses
-        # Last-Event-ID/`after`, while regular cursor pagination remains null.
-        return {"events": events, "data": events, "status": str(job.status).upper(), "lastEventId": events[-1]["sequence"] if events else cursor, "page": {"nextCursor": None}}
+        next_cursor = str(rows[-1].sequence) if has_more and rows else None
+        return {"events": events, "data": events, "status": str(job.status).upper(), "lastEventId": events[-1]["sequence"] if events else start_cursor, "page": {"nextCursor": next_cursor}}
 
     @app.get("/v1/optimization-runs/{run_id}/events/stream", tags=["optimizations"])
     def frontend_optimization_event_stream(
@@ -1807,6 +1863,10 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
         if recommendation is None: raise HTTPException(status_code=409, detail="Recommendation is not ready")
         return recommendation
 
+    @app.get("/v1/optimization-runs/{run_id}/recommendation", response_model=dict[str, Any], tags=["optimizations"])
+    def frontend_optimization_recommendation(run_id: str, tenant: Tenant = Depends(get_tenant), session: Session = Depends(get_session)):
+        return optimization_recommendation(run_id, tenant=tenant, session=session)
+
     def _persisted_export(reference: str | None, run_id: str | None, tenant: Tenant, session: Session) -> dict[str, Any]:
         project = _project_reference(reference, tenant=tenant, session=session); cls = getattr(api_models, "OptimizationResult", None)
         if cls is None: raise HTTPException(status_code=503, detail="Optimization result persistence is unavailable")
@@ -1814,7 +1874,18 @@ def create_app(*, session_factory: sessionmaker[Session] | None = None, database
         if run_id: query = query.where(cls.job_id == run_id)
         result = session.scalars(query.order_by(cls.created_at.desc())).first()
         if result is None or getattr(result, "recommendation", None) is None: raise HTTPException(status_code=409, detail="Recommendation is not ready")
-        payload = {"project": project.slug, "project_id": project.id, "run_id": result.job_id, "status": result.status, "recommendation": result.recommendation}
+        payload = {
+            "project": project.slug,
+            "project_id": project.id,
+            "run_id": result.job_id,
+            "status": result.status,
+            "recommendation": result.recommendation,
+            # Export is derived exclusively from the persisted recommendation;
+            # this marker lets clients distinguish it from browser-local state.
+            "verified": True,
+            "format": "json",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
         metadata = getattr(result, "metadata_json", None) or getattr(result, "metadata", None)
         if metadata: payload["metadata"] = metadata
         return payload

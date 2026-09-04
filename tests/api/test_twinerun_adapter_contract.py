@@ -149,3 +149,63 @@ def test_frontend_export_reports_unready_queued_run_or_returns_export(client):
     assert response.status_code in {200, 409}, response.text
     if response.status_code == 200:
         assert response.headers.get("content-type", "").split(";", 1)[0] in {"application/json", "application/yaml", "text/yaml"}
+
+
+
+def test_project_eval_runs_are_listed_in_a_tenant_scoped_collection(client):
+    created = client.post(
+        f"/api/v1/projects/{client.test_tenant[1]}/eval-suites",
+        headers=auth_header(client),
+        json={"name": "contract suite", "cases": [{"id": "case-1", "input": {}, "expected": {}}]},
+    )
+    assert created.status_code == 201, created.text
+    started = client.post(
+        f"/api/v1/eval-suites/{created.json()['id']}/runs",
+        headers=auth_header(client),
+        json={},
+    )
+    assert started.status_code == 202, started.text
+    response = client.get(
+        f"/api/v1/projects/{client.test_tenant[1]}/eval-runs",
+        headers=auth_header(client),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"][0]["runId"] == started.json()["runId"]
+    assert response.json()["page"]["nextCursor"] is None
+
+
+def test_direct_profile_retrieval_returns_the_queued_profile_run(client):
+    started = client.post("/api/v1/profiles", headers=auth_header(client), json={"project_id": client.test_tenant[1]})
+    assert started.status_code == 202, started.text
+    response = client.get(f"/api/v1/profiles/{started.json()['run_id']}", headers=auth_header(client))
+    assert response.status_code == 200, response.text
+    assert response.json()["run_id"] == started.json()["run_id"]
+    assert response.json()["project_id"] == client.test_tenant[1]
+
+
+def test_recommendation_alias_preserves_server_readiness_conflict(client):
+    run_id = queue_optimization(client)
+    response = client.get(f"/api/v1/optimization-runs/{run_id}/recommendation", headers=auth_header(client))
+    assert response.status_code == 409, response.text
+
+
+def test_event_collection_accepts_cursor_and_returns_next_cursor(client):
+    run_id = queue_optimization(client)
+    cancelled = client.post(f"/api/v1/optimization-runs/{run_id}/cancel", headers=auth_header(client))
+    assert cancelled.status_code == 200, cancelled.text
+    response = client.get(
+        f"/api/v1/optimization-runs/{run_id}/events",
+        headers=auth_header(client),
+        params={"limit": 1},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["events"]) == 1
+    assert body["page"]["nextCursor"] is not None
+    next_page = client.get(
+        f"/api/v1/optimization-runs/{run_id}/events",
+        headers=auth_header(client),
+        params={"cursor": body["page"]["nextCursor"]},
+    )
+    assert next_page.status_code == 200, next_page.text
+    assert next_page.json()["events"][0]["sequence"] > body["events"][0]["sequence"]
