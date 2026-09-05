@@ -6,6 +6,8 @@
 }
 /* Section pages intentionally use a static texture: animated light bars compete with pricing copy. */
 .vesper-route-page .vesper-photo video { display: none !important; }
+/* Pricing is a comparison surface: keep decorative button sweeps from competing with plan rows. */
+.vesper-route-page[data-vesper-route="pricing"] .vesper-btn::after { display: none; }
 .vesper-route-header { position: sticky; top: 0; background: linear-gradient(180deg, rgba(0,0,0,.94), rgba(0,0,0,.58), transparent); backdrop-filter: blur(10px); }
 .vesper-route-main { position: relative; z-index: 1; }
 .vesper-route-hero { max-width: 930px; margin: 0 auto; padding: 130px 40px 115px; text-align: center; }

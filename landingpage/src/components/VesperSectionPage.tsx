@@ -287,7 +287,10 @@ export const VesperSectionPage: React.FC<Props> = ({
     )
     .join(" ");
   return (
-    <div className="vesper-page vesper-page--long vesper-route-page">
+    <div
+      className="vesper-page vesper-page--long vesper-route-page"
+      data-vesper-route={route}
+    >
       <div className="vesper-grain" aria-hidden="true" />
       <div className="vesper-photo vesper-photo--static" aria-hidden="true" />
       <div className="vesper-backdrop" aria-hidden="true" />
