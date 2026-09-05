@@ -2,7 +2,7 @@ import React, { FormEvent, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, LockKeyhole, Mail, UserRound } from "lucide-react";
 import { createDemoSession, DemoSession, nameFromEmail, setDemoSession } from "../auth/demoAuth";
 import { api, ApiError, DEMO_AUTH_ENABLED } from "../lib/api";
-import { navigate } from "../lib/router";
+import { navigate, parseBrowserLocation } from "../lib/router";
 
 interface AuthPageProps {
   mode: "signin" | "signup";
@@ -17,10 +17,18 @@ export const AuthPage: React.FC<AuthPageProps> = ({ mode, onAuthenticated }) => 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const referralCode = (() => {
-    const value = new URLSearchParams(window.location.search).get("ref")?.trim() || "";
-    return /^[A-Za-z0-9_-]{4,80}$/.test(value) ? value : "";
-  })();
+  // Read auth context from the normalized router so referrals and return
+  // paths survive links from both current pathname routes and legacy hashes.
+  const authRoute = parseBrowserLocation().route;
+  const routeReturnTo = authRoute.kind === "auth" ? authRoute.returnTo : undefined;
+  const routeReferralCode = authRoute.kind === "auth" ? authRoute.referralCode : undefined;
+  const referralCode = routeReferralCode && /^[A-Za-z0-9_-]{4,80}$/.test(routeReferralCode.trim())
+    ? routeReferralCode.trim()
+    : "";
+  const authSwitchParams = new URLSearchParams();
+  if (routeReturnTo) authSwitchParams.set("returnTo", routeReturnTo);
+  if (referralCode) authSwitchParams.set("ref", referralCode);
+  const authSwitchPath = `/${isSignUp ? "signin" : "signup"}${authSwitchParams.toString() ? `?${authSwitchParams.toString()}` : ""}`;
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const firstField = useRef<HTMLInputElement>(null);
@@ -134,7 +142,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ mode, onAuthenticated }) => 
           </form>
           <p className="auth-switch">
             {isSignUp ? "Already have a workspace?" : "New to TwineRun?"}{" "}
-            <a href={isSignUp ? "/signin" : "/signup"}>{isSignUp ? "Sign in" : "Create an account"}</a>
+            <a href={authSwitchPath}>{isSignUp ? "Sign in" : "Create an account"}</a>
           </p>
           <p className="auth-trust"><Check size={14} /> Server-authenticated workspace · production agents remain untouched</p>
         </section>

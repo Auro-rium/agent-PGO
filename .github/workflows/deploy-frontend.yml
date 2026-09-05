@@ -12,6 +12,10 @@ permissions:
   contents: read
   id-token: write
 
+concurrency:
+  group: twinerun-frontend-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   AWS_REGION: us-east-1
   LAMBDA_FUNCTION_NAME: agentpgo-frontend
@@ -69,6 +73,36 @@ jobs:
           grep -R -Fq "https://koq91flf04.execute-api.us-east-1.amazonaws.com/api/v1" dist/assets
           ! grep -R -Fq '"/api/v1"' dist/assets
 
+      - name: Validate Lambda static routing contract
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import importlib.util
+          import tempfile
+          from pathlib import Path
+
+          with tempfile.TemporaryDirectory() as tmp:
+              root = Path(tmp)
+              (root / "index.html").write_text("<title>TwineRun</title>", encoding="utf-8")
+              (root / "assets").mkdir()
+              (root / "assets" / "app.js").write_text("console.log(1)", encoding="utf-8")
+              spec = importlib.util.spec_from_file_location("handler", "lambda/handler.py")
+              handler = importlib.util.module_from_spec(spec)
+              spec.loader.exec_module(handler)
+              handler.SITE_ROOT = root.resolve()
+
+              def response(path, method="GET"):
+                  event = {"rawPath": path, "requestContext": {"http": {"method": method}}}
+                  return handler.lambda_handler(event, None)
+
+              assert response("/studio")["statusCode"] == 200
+              assert response("/assets/app.js")["statusCode"] == 200
+              assert response("/assets/missing.js")["statusCode"] == 404
+              assert response("/missing.css")["statusCode"] == 404
+              assert response("/assets/missing.js", "HEAD")["body"] == ""
+          print("Lambda static routing contract passed")
+          PY
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -84,7 +118,9 @@ jobs:
           mkdir -p .lambda-package/site
           cp -R dist/. .lambda-package/site/
           cp lambda/handler.py .lambda-package/handler.py
+          printf '%s\n' "$GITHUB_SHA" > .lambda-package/build-sha
           (cd .lambda-package && zip -qr ../.lambda-package.zip .)
+          test "$(tr -d '\n' < .lambda-package/build-sha)" = "$GITHUB_SHA"
 
       - name: Deploy Lambda
         shell: bash
@@ -103,14 +139,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          html="$(curl --fail --silent --show-error "$FUNCTION_URL")"
+          response_headers="$RUNNER_TEMP/twinerun-frontend-headers.txt"
+          html="$(curl --fail --silent --show-error --dump-header "$response_headers" "$FUNCTION_URL")"
+          live_sha="$(awk 'BEGIN { IGNORECASE=1 } /^x-twinerun-build-sha:/ { sub(/^[^:]*:[[:space:]]*/, ""); gsub(/\r/, ""); print; exit }' "$response_headers")"
+          test "$live_sha" = "$GITHUB_SHA" || {
+            echo "Live build SHA mismatch: expected $GITHUB_SHA, got ${live_sha:-<missing>}" >&2
+            exit 1
+          }
           grep -q '<title>TwineRun — Operational AI Infrastructure</title>' <<< "$html"
           browser_path_html="$(curl --fail --silent --show-error "${FUNCTION_URL%/}/studio")"
           grep -q '<title>TwineRun — Operational AI Infrastructure</title>' <<< "$browser_path_html"
           asset="$(grep -o 'assets/index-[A-Za-z0-9_-]*\.js' <<< "$html" | head -1)"
           test -n "$asset"
           bundle="$(curl --fail --silent --show-error "$FUNCTION_URL$asset")"
+          test -f "dist/$asset"
+          curl --fail --silent --show-error "$FUNCTION_URL$asset" > "$RUNNER_TEMP/twinerun-live-asset.js"
+          cmp -s "dist/$asset" "$RUNNER_TEMP/twinerun-live-asset.js" || {
+            echo "Live JavaScript asset differs from the build artifact: $asset" >&2
+            exit 1
+          }
           grep -q 'EMPIRICAL BENCHMARKS' <<< "$bundle"
           grep -q 'twinerun-logo.png' <<< "$bundle"
           ! grep -Eqi 'Vesper\.ai|See It Work' <<< "$bundle"
+          test "$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "$FUNCTION_URL/assets/missing-build-sentinel.js")" = "404"
           echo "TwineRun frontend smoke test passed: $FUNCTION_URL"
