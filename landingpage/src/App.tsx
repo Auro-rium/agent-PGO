@@ -80,8 +80,15 @@ export default function App({ session, onLogout, onOpenProfile }: AppProps) {
   const [baselineRunId, setBaselineRunId] = useState<string | undefined>();
   const [evalDatasetId, setEvalDatasetId] = useState<string | undefined>();
   const streamRef = useRef<OptimizerStream | null>(null);
+  const startOptimizationRef = useRef<() => Promise<void>>(async () => undefined);
   const layoutRef = useRef(layout);
   const layoutTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+
+  const closeOptimizerStream = useCallback(() => {
+    const stream = streamRef.current;
+    streamRef.current = null;
+    stream?.close();
+  }, []);
 
   const loadProjects = useCallback(async () => {
     const applyProjects = async (list: AgentProject[]) => {
@@ -125,7 +132,7 @@ export default function App({ session, onLogout, onOpenProfile }: AppProps) {
     }
   }, []);
 
-  useEffect(() => { void loadProjects(); return () => streamRef.current?.close(); }, [loadProjects]);
+  useEffect(() => { void loadProjects(); return closeOptimizerStream; }, [closeOptimizerStream, loadProjects]);
   useEffect(() => {
     if (!project) return;
     let cancelled = false;
@@ -174,10 +181,14 @@ export default function App({ session, onLogout, onOpenProfile }: AppProps) {
     }
   }, [activeRunId, project?.id, project?.runId]);
   useEffect(() => { const handle = () => setCurrentView(studioViewFromPath(window.location.pathname)); window.addEventListener('popstate', handle); window.addEventListener('hashchange', handle); return () => { window.removeEventListener('popstate', handle); window.removeEventListener('hashchange', handle); }; }, []);
-  useEffect(() => () => streamRef.current?.close(), []);
+  // A stream belongs to the project that started it. Close it before the
+  // project identity changes so late polling responses cannot update the new
+  // project's graph or status.
+  useEffect(() => closeOptimizerStream, [closeOptimizerStream, project?.id]);
 
   const handleViewChange = (view: ViewMode) => { navigate(studioPath(view)); setCurrentView(view); };
   const handleSelectProject = async (projectId: string) => {
+    closeOptimizerStream();
     try {
       const next = await api.project(projectId);
       window.sessionStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, projectId);
@@ -299,6 +310,10 @@ export default function App({ session, onLogout, onOpenProfile }: AppProps) {
     }
   };
 
+  // Keep the global keyboard listener stable while still invoking the latest
+  // optimization handler as project/readiness state changes.
+  startOptimizationRef.current = startOptimization;
+
   const selectCandidate = async (candidate: OptimizationCandidate) => {
     setSelectedCandidateId(candidate.id);
     if (!project || !activeRunId) return;
@@ -323,9 +338,9 @@ export default function App({ session, onLogout, onOpenProfile }: AppProps) {
   const progress = optimizationStatus === 'QUEUED' ? 8 : optimizationStatus === 'BASELINING' ? 25 : optimizationStatus === 'SEARCHING' ? 58 : optimizationStatus === 'VERIFYING' ? 84 : optimizationStatus === 'COMPLETED' ? 100 : 0;
 
   useEffect(() => {
-    const handleKey = (event: KeyboardEvent) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); setIsCommandPaletteOpen((open) => !open); } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'r') { event.preventDefault(); void startOptimization(); } };
+    const handleKey = (event: KeyboardEvent) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); setIsCommandPaletteOpen((open) => !open); } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'r') { event.preventDefault(); void startOptimizationRef.current(); } };
     window.addEventListener('keydown', handleKey); return () => window.removeEventListener('keydown', handleKey);
-  });
+  }, []);
 
   if (!project) {
     if (projectsLoaded) return <div className="studio-shell flex h-screen w-screen bg-[#050505] text-[#D6D9DC] overflow-hidden font-sans"><ProjectOnboarding busy={creatingProject} error={error} onCreateProject={createProject} onRefresh={() => void loadProjects()} /></div>;

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { AgentProject, NodePosition } from '../types';
 import { 
   ZoomIn, 
@@ -57,6 +57,7 @@ export const ExecutionGraph: React.FC<ExecutionGraphProps> = ({
     startPan?: { x: number; y: number };
     nodeId?: string;
     startNode?: { x: number; y: number };
+    lastNodePosition?: { x: number; y: number };
   } | null>(null);
   const frameRef = useRef<number | null>(null);
   const pendingPanRef = useRef<{ x: number; y: number } | null>(null);
@@ -85,13 +86,24 @@ export const ExecutionGraph: React.FC<ExecutionGraphProps> = ({
 
   const flushPendingNode = useCallback(() => {
     const pending = pendingNodeRef.current;
-    if (!pending) return;
+    const drag = dragRef.current;
+    const finalNode = pending || (
+      drag?.type === 'node' && drag.nodeId && drag.lastNodePosition
+        ? { id: drag.nodeId, position: drag.lastNodePosition }
+        : null
+    );
+    if (!finalNode) return;
     pendingNodeRef.current = null;
-    const nextPositions = { ...nodePositionsRef.current, [pending.id]: pending.position };
+    const nextPositions = { ...nodePositionsRef.current, [finalNode.id]: finalNode.position };
     nodePositionsRef.current = nextPositions;
     setNodePositions(nextPositions);
     onLayoutChange?.(nextPositions);
   }, [onLayoutChange]);
+
+  const nodesById = useMemo(
+    () => new Map(project.nodes.map((node) => [node.id, node])),
+    [project.nodes]
+  );
 
   // Initialize node positions from the persisted project layout. Layouts are
   // revisioned server state, so re-read them when a project or layout revision
@@ -136,13 +148,15 @@ export const ExecutionGraph: React.FC<ExecutionGraphProps> = ({
         y: drag.startPan.y + e.clientY - drag.startY
       };
     } else if (drag.type === 'node' && drag.nodeId && drag.startNode) {
+      const position = {
+        x: Math.max(20, drag.startNode.x + (e.clientX - drag.startX) / zoomRef.current),
+        y: Math.max(20, drag.startNode.y + (e.clientY - drag.startY) / zoomRef.current)
+      };
       pendingNodeRef.current = {
         id: drag.nodeId,
-        position: {
-          x: Math.max(20, drag.startNode.x + (e.clientX - drag.startX) / zoomRef.current),
-          y: Math.max(20, drag.startNode.y + (e.clientY - drag.startY) / zoomRef.current)
-        }
+        position
       };
+      drag.lastNodePosition = position;
     }
     scheduleFrame();
   };
@@ -252,8 +266,8 @@ export const ExecutionGraph: React.FC<ExecutionGraphProps> = ({
         </defs>
 
         {project.edges.map((edge) => {
-          const fromNode = project.nodes.find((n) => n.id === edge.from);
-          const toNode = project.nodes.find((n) => n.id === edge.to);
+          const fromNode = nodesById.get(edge.from);
+          const toNode = nodesById.get(edge.to);
           if (!fromNode || !toNode) return null;
 
           const fromPos = nodePositions[fromNode.id] || { x: fromNode.x, y: fromNode.y };
@@ -306,14 +320,13 @@ export const ExecutionGraph: React.FC<ExecutionGraphProps> = ({
                 markerEnd={isWireActive ? 'url(#active-silver-arrow)' : 'url(#silver-arrow)'}
                 strokeDasharray={isOptimizing ? '4 4' : undefined}
               />
-              {/* Animated token packet pulses */}
-              <circle r={isWireActive ? '2.5' : '1.75'} fill="#F2F3F4">
-                <animateMotion
-                  path={pathD}
-                  dur={isOptimizing ? '1.2s' : '2.8s'}
-                  repeatCount="indefinite"
-                />
-              </circle>
+              {/* Token packets are useful while the optimizer is running, but
+                  an idle graph should stay still so every edge is paint-only. */}
+              {isOptimizing && (
+                <circle r={isWireActive ? '2.5' : '1.75'} fill="#F2F3F4">
+                  <animateMotion path={pathD} dur="1.2s" repeatCount="indefinite" />
+                </circle>
+              )}
             </g>
           );
         })}
@@ -355,7 +368,7 @@ export const ExecutionGraph: React.FC<ExecutionGraphProps> = ({
                 e.stopPropagation();
                 onSelectNode(isSelected ? null : node.id);
               }}
-              className={`graph-node-card absolute pointer-events-auto w-[225px] rounded-lg transition-all duration-150 cursor-pointer select-none border ${
+              className={`graph-node-card absolute pointer-events-auto w-[225px] rounded-lg transition-[background-color,border-color,box-shadow,color] duration-150 cursor-pointer select-none border ${
                 isSelected
                   ? 'bg-[#0F1113] border-[#D7DADD] shadow-[0_0_24px_rgba(215,218,221,0.12)]'
                   : isTesting

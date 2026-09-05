@@ -81,3 +81,56 @@ body.vesper-menu-open .vesper-backdrop {
 .vesper-checkout-note { color: #b8bdc1; }
 .vesper-checkout-error { color: #f0b6b6; }
 @media (max-width: 560px) { .account-grid { grid-template-columns: 1fr; } .profile-referrals-head { flex-direction: column; } .profile-referrals-head .vesper-btn { width: 100%; } .referral-link-row { align-items: stretch; flex-direction: column; } .referral-link-row .vesper-btn { width: 100%; } }
+
+/* Account workspace: an intentional control surface, distinct from auth. */
+.profile-main { place-items: center; padding-top: 28px; }
+.profile-shell { width: min(100%, 980px); display: grid; grid-template-columns: minmax(220px, .72fr) minmax(0, 1.28fr); border: 1px solid rgba(255,255,255,.13); background: linear-gradient(135deg, rgba(17,19,21,.96), rgba(5,6,7,.96)); box-shadow: 0 28px 100px rgba(0,0,0,.48), inset 0 1px 0 rgba(255,255,255,.05); }
+.profile-identity { display: flex; min-height: 540px; flex-direction: column; align-items: flex-start; padding: 36px 30px; border-right: 1px solid rgba(255,255,255,.1); text-align: left; }
+.profile-identity .profile-avatar { margin: 0 0 24px; width: 64px; height: 64px; border-radius: 12px; background: linear-gradient(145deg, #f2f3f4, #aeb4b8); }
+.profile-identity h1 { align-items: flex-start; margin-top: 14px; font-size: 34px; }
+.profile-identity-copy { max-width: 210px; margin-top: 18px; color: #858b90; font-size: 12px; line-height: 1.6; }
+.profile-identity .profile-actions { width: 100%; margin-top: auto; flex-direction: column; }
+.profile-identity .profile-actions .vesper-btn { width: 100%; }
+.profile-system-link { display: inline-flex; align-items: center; gap: 7px; margin-top: 16px; color: #777e84; font-size: 11px; }
+.profile-system-link:hover { color: #f2f3f4; }
+.profile-content { min-width: 0; padding: 36px 34px 28px; text-align: left; }
+.profile-content-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding-bottom: 22px; border-bottom: 1px solid rgba(255,255,255,.1); }
+.profile-content-head h2 { margin-top: 9px; color: #f2f3f4; font: 500 24px/1.1 Inter, sans-serif; letter-spacing: -.04em; }
+.profile-authority { color: #7f878d; font: 9px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .1em; }
+.profile-content .profile-pending, .profile-content .auth-error { margin-top: 16px; }
+.profile-content .account-grid { margin-top: 22px; }
+.profile-content .profile-referrals { margin-top: 12px; }
+.profile-content .auth-trust { justify-content: flex-start; margin-top: 22px; text-align: left; }
+
+/* Onboarding: make progress read as a sequence of evidence, not four sales cards. */
+.onboarding-page { background: radial-gradient(circle at 50% 0%, rgba(48,56,62,.13), transparent 42%), #050505; }
+.onboarding-content { max-width: 920px; }
+.onboarding-header { padding-bottom: 24px; border-bottom: 1px solid rgba(255,255,255,.1); }
+.onboarding-steps { position: relative; grid-template-columns: 1fr; gap: 0; margin-top: 28px; }
+.onboarding-steps::before { content: ""; position: absolute; left: 16px; top: 24px; bottom: 24px; width: 1px; background: rgba(255,255,255,.11); }
+.onboarding-step { position: relative; display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: start; gap: 12px; min-height: 92px; padding: 18px 18px 18px 0; border-width: 0 0 1px; border-color: rgba(255,255,255,.09); border-radius: 0; background: transparent !important; }
+.onboarding-step:last-child { border-bottom: 0; }
+.onboarding-step > div:first-child { display: contents; }
+.onboarding-step-index { position: relative; z-index: 1; grid-column: 1; grid-row: 1 / span 3; width: 33px; height: 33px; margin-left: 0; border-color: rgba(255,255,255,.2) !important; border-radius: 50%; background: #080a0b; }
+.onboarding-step p { grid-column: 2; grid-row: 2; margin-top: 4px; max-width: 560px; }
+.onboarding-step button { grid-column: 2; grid-row: 3; margin-top: 11px; }
+.onboarding-step > div:first-child h2 { grid-column: 2; grid-row: 1; padding-top: 8px; }
+.onboarding-step > div:first-child > span:last-child { grid-column: 3; grid-row: 1; padding-top: 8px; }
+.onboarding-step:has(.onboarding-step-index.bg-\[\#E4E7E9\]) { opacity: .72; }
+.onboarding-step:has(.onboarding-step-index.bg-\[\#E4E7E9\]) h2 { text-decoration: line-through; text-decoration-color: rgba(255,255,255,.28); }
+.onboarding-empty { box-shadow: 0 28px 100px rgba(0,0,0,.48), inset 0 1px 0 rgba(255,255,255,.05); }
+@media (max-width: 760px) {
+  .profile-shell { grid-template-columns: 1fr; }
+  .profile-identity { min-height: 0; padding: 28px 24px; border-right: 0; border-bottom: 1px solid rgba(255,255,255,.1); }
+  .profile-identity-copy { max-width: 360px; }
+  .profile-identity .profile-actions { margin-top: 26px; flex-direction: row; }
+  .profile-content { padding: 28px 24px 24px; }
+}
+@media (max-width: 560px) {
+  .profile-main { padding: 18px 14px 40px; }
+  .profile-content-head { flex-direction: column; }
+  .onboarding-page { padding: 18px 16px; }
+  .onboarding-content { padding-top: 16px; }
+  .onboarding-step { grid-template-columns: 40px minmax(0, 1fr); }
+  .onboarding-step > div:first-child > span:last-child { grid-column: 2; grid-row: 4; padding-top: 0; }
+}
