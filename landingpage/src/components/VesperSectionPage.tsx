@@ -222,7 +222,7 @@ export const VesperSectionPage: React.FC<Props> = ({
     pricing: [
       "LAUNCH PRICING",
       "Start where your agent is.",
-      "Launch prices for builders finding the best cost-quality tradeoff.",
+      "Choose the capacity you need to profile traces, evaluate quality, and optimize your projects.",
     ],
   }[route] as [string, string, string];
   const renderBenchmark = (candidate: OptimizationCandidate) => {
@@ -400,49 +400,40 @@ export const VesperSectionPage: React.FC<Props> = ({
         )}
         {route === "pricing" && (
           <section className="vesper-route-content">
+            <div className="vesper-pricing-context">
+              <p>Bring your own provider keys and keep control of your model spend.</p>
+              <p>TwineRun measures usage against the limits of your plan.</p>
+            </div>
             <div id="plans" className="vesper-pricing-grid">
               {[
                 [
                   "FREE",
                   "$0",
-                  "For experimenting and small personal agents.",
+                  "Start profiling and optimizing real agents with your own provider keys.",
                   [
-                    "1 agent",
-                    "Local profiling",
-                    "Cost and latency analysis",
-                    "Small evaluation suites",
-                    "Basic optimization runs",
-                    "PGO config export",
+                    "3 projects",
+                    "100,000 trace spans / month",
+                    "1,000 evaluation cases",
+                    "5 optimization runs / month",
+                    "7-day data retention",
+                    "BYOK provider connections",
+                    "Trace profiling and quality evaluation",
+                    "Verified optimization recommendations",
+                    "JSON/YAML configuration export",
                   ],
                 ],
                 [
                   "PRO",
                   "$49 / month",
-                  "For indie hackers shipping agents to users.",
+                  "Run larger optimization programs with more capacity and longer history.",
                   [
-                    "Up to 5 agents",
-                    "Hosted profiling",
-                    "Larger evaluation suites",
-                    "Full model optimization",
-                    "Pareto frontier",
-                    "Optimization history",
-                    "Configuration exports",
-                    "Email support",
-                  ],
-                ],
-                [
-                  "TEAM",
-                  "$249 / month",
-                  "For teams running production AI systems.",
-                  [
-                    "Up to 20 agents",
-                    "Shared projects",
-                    "Team eval suites",
-                    "Higher optimization limits",
-                    "Run history",
-                    "CI integration",
-                    "Advanced retention controls",
-                    "Priority support",
+                    "25 projects",
+                    "1,000,000 trace spans / month",
+                    "100,000 evaluation cases",
+                    "100 optimization runs / month",
+                    "90-day data retention",
+                    "Everything in Free",
+                    "Higher provider-spend and experiment-budget limits",
                   ],
                 ],
               ].map(([name, price, audience, features], index) => (
@@ -464,14 +455,7 @@ export const VesperSectionPage: React.FC<Props> = ({
                       </li>
                     ))}
                   </ul>
-                  {index === 2 ? (
-                    <>
-                      <button type="button" className="vesper-btn vesper-btn--ghost vesper-btn--disabled" disabled>
-                        Coming later
-                      </button>
-                      <p className="vesper-plan-note">Team workspaces are not available at launch.</p>
-                    </>
-                  ) : index === 0 ? (
+                  {index === 0 ? (
                     <a href={signupPath} className="vesper-btn vesper-btn--ghost">Start Free <ArrowRight size={15} /></a>
                   ) : session ? (
                     <button type="button" className="vesper-btn vesper-btn--solid" onClick={() => onStartCheckout?.(referralCode || undefined)} disabled={checkoutState === "starting"} aria-busy={checkoutState === "starting"}>
