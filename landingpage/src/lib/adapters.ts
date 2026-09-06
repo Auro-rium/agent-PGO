@@ -1,4 +1,4 @@
-import { AgentNode, AgentProject, BaselineRun, CandidateSubstitution, EvalCase, EvalCaseInput, EvalGrader, EvalRun, EvalRunCase, EvalSuite, JsonObject, OptimizationCandidate, OptimizationRecommendation, OptimizationRun, OptimizerEvent, ProfileMetrics, ProfileRun, ProjectLayout, ProjectSettings, ProjectSetupState, TraceDetail, TraceSpan } from "../types";
+import { AgentNode, AgentProject, BaselineRun, CandidateSubstitution, EvalCase, EvalCaseInput, EvalGrader, EvalRun, EvalRunCase, EvalSuite, JsonObject, OptimizationCandidate, OptimizationRecommendation, OptimizationRun, OptimizerEvent, OnboardingChange, OnboardingEvidence, OnboardingHarnessDescriptor, OnboardingProposal, OnboardingSession, ProfileMetrics, ProfileRun, ProjectLayout, ProjectSettings, ProjectSetupState, TraceDetail, TraceSpan } from "../types";
 
 const value = (item: unknown, key: string, fallback: unknown = undefined): unknown => item && typeof item === "object" && key in item ? (item as Record<string, unknown>)[key] : fallback;
 const number = (item: unknown, keys: string[], fallback = 0) => {
@@ -27,6 +27,27 @@ const optionalText = (item: unknown, keys: string[]): string | null | undefined 
 };
 
 const candidatePresent = (item: unknown, keys: string[]) => keys.some((key) => item && typeof item === "object" && key in item);
+
+const list = (item: unknown, keys: string[]): unknown[] => {
+  for (const key of keys) {
+    const candidate = value(item, key);
+    if (Array.isArray(candidate)) return candidate;
+    if (candidate && typeof candidate === "object" && Array.isArray((candidate as Record<string, unknown>).data)) return (candidate as { data: unknown[] }).data;
+  }
+  return [];
+};
+
+/** Remove credential-shaped fields before arbitrary backend metadata enters a
+ * durable browser model. The API may return either casing for these keys. */
+const isSensitiveKey = (key: string) => /(?:secret|token|password|credential|private[_-]?key|api[_-]?key)/i.test(key);
+const safeJson = (candidate: unknown): unknown => {
+  if (Array.isArray(candidate)) return candidate.map(safeJson);
+  if (candidate && typeof candidate === "object") {
+    return Object.fromEntries(Object.entries(candidate as Record<string, unknown>).filter(([key]) => !isSensitiveKey(key)).map(([key, entry]) => [key, safeJson(entry)]));
+  }
+  return candidate;
+};
+const safeObject = (item: unknown, keys: string[]): JsonObject => safeJson(object(item, keys)) as JsonObject;
 
 export const modelLabel = (model: string) => {
   const clean = model.split("/").pop() || model;
@@ -132,6 +153,7 @@ const adaptSetup = (item: unknown, version: string, nodes: AgentNode[]): Project
   const status = text(source, ["baselineStatus", "baseline_status"], Boolean(completed.baseline) ? "COMPLETED" : "NOT_STARTED").toUpperCase();
   return {
     projectCreated: bool(["projectCreated", "project_created"], true),
+    stage: optionalText(source, ["stage"]) || undefined,
     hasVersion: bool(["hasVersion", "has_version", "agentVersion", "agent_version"], Boolean(version && version !== "latest")),
     hasTraces: bool(["hasTraces", "has_traces", "traces"], false),
     hasEvaluationSuite: bool(["hasEvaluationSuite", "has_evaluation_suite", "hasEvals", "has_evals", "evaluations", "evalSuites", "eval_suites"], false),
@@ -141,10 +163,114 @@ const adaptSetup = (item: unknown, version: string, nodes: AgentNode[]): Project
     versionId: text(source, ["versionId", "version_id"], version),
     traceCount: number(source, ["traceCount", "trace_count"], number(counts, ["traces"])),
     evalCaseCount: number(source, ["evalCaseCount", "eval_case_count"], number(counts, ["evalCases", "eval_case_count", "evaluations"])),
+    completed: {
+      project: Boolean(completed.project ?? completed.projectCreated ?? completed.project_created),
+      agentVersion: Boolean(completed.agentVersion ?? completed.version ?? completed.agent_version),
+      traces: Boolean(completed.traces ?? completed.hasTraces ?? completed.has_traces),
+      evaluations: Boolean(completed.evaluations ?? completed.evalSuites ?? completed.eval_suites),
+      baseline: Boolean(completed.baseline),
+    },
+    counts: {
+      versions: number(counts, ["versions"]),
+      traces: number(counts, ["traces"]),
+      evalSuites: number(counts, ["evalSuites", "eval_suites"]),
+      baselineRuns: number(counts, ["baselineRuns", "baseline_runs"]),
+    },
   };
 };
 
 export function adaptOnboarding(item: unknown): ProjectSetupState { return adaptSetup(item, "", []) || { projectCreated: true, hasVersion: false, hasTraces: false, hasEvaluationSuite: false, baselineStatus: "NOT_STARTED", nextAction: "DEFINE_AGENT" }; }
+
+export function adaptOnboardingHarness(item: unknown): OnboardingHarnessDescriptor {
+  const source = value(item, "harness", value(item, "harnessDescriptor", value(item, "harness_descriptor", item)));
+  const capabilities = list(source, ["capabilities", "supportedCapabilities", "supported_capabilities"]);
+  return {
+    id: optionalText(source, ["id", "harnessId", "harness_id"]) || undefined,
+    name: optionalText(source, ["name"]) || undefined,
+    kind: optionalText(source, ["kind", "type"]) || undefined,
+    framework: optionalText(source, ["framework", "frameworkName", "framework_name"]) || undefined,
+    runtime: optionalText(source, ["runtime", "runtimeName", "runtime_name"]) || undefined,
+    version: optionalText(source, ["version"]) || undefined,
+    entrypoint: optionalText(source, ["entrypoint", "entryPoint", "entry_point"]) || undefined,
+    detected: candidatePresent(source, ["detected", "isDetected", "is_detected"]) ? Boolean(value(source, "detected", value(source, "isDetected", value(source, "is_detected")))) : undefined,
+    ...(capabilities.length ? { capabilities: capabilities.map(String) } : {}),
+    metadata: safeObject(source, ["metadata", "metadataJson", "metadata_json"]),
+  };
+}
+
+export function adaptOnboardingEvidence(item: unknown): OnboardingEvidence {
+  return {
+    id: optionalText(item, ["id", "evidenceId", "evidence_id"]) || undefined,
+    kind: text(item, ["kind", "type", "evidenceType", "evidence_type"], "unknown"),
+    status: optionalText(item, ["status"]) || undefined,
+    summary: optionalText(item, ["summary", "description"]) || undefined,
+    count: optionalNumber(item, ["count", "sampleCount", "sample_count"]),
+    observedAt: optionalText(item, ["observedAt", "observed_at", "createdAt", "created_at"]),
+    metadata: safeObject(item, ["metadata", "metadataJson", "metadata_json"]),
+  };
+}
+
+export function adaptOnboardingChange(item: unknown): OnboardingChange {
+  return {
+    kind: text(item, ["kind", "type", "changeType", "change_type"], "change"),
+    path: optionalText(item, ["path", "field", "fieldPath", "field_path"]) || undefined,
+    label: optionalText(item, ["label", "name"]) || undefined,
+    ...(candidatePresent(item, ["before", "previous", "previousValue", "previous_value"]) ? { before: safeJson(value(item, "before", value(item, "previous", value(item, "previousValue", value(item, "previous_value"))))) as OnboardingChange["before"] } : {}),
+    ...(candidatePresent(item, ["after", "next", "nextValue", "next_value"]) ? { after: safeJson(value(item, "after", value(item, "next", value(item, "nextValue", value(item, "next_value"))))) as OnboardingChange["after"] } : {}),
+    rationale: optionalText(item, ["rationale", "reason"]) || undefined,
+  };
+}
+
+export function adaptOnboardingProposal(item: unknown): OnboardingProposal {
+  const source = value(item, "proposal", value(item, "onboardingProposal", value(item, "onboarding_proposal", item)));
+  const proposalId = text(source, ["id", "proposalId", "proposal_id"]);
+  const payload = safeJson(source) as JsonObject;
+  return {
+    id: proposalId,
+    proposalId: proposalId || undefined,
+    sessionId: optionalText(source, ["sessionId", "session_id"]) || undefined,
+    projectId: optionalText(source, ["projectId", "project_id"]) || undefined,
+    status: text(source, ["status", "decision"], "PENDING").toUpperCase(),
+    revision: optionalNumber(source, ["revision", "version"]),
+    title: optionalText(source, ["title", "name"]) || undefined,
+    summary: optionalText(source, ["summary", "description"]) || undefined,
+    rationale: optionalText(source, ["rationale", "reason"]) || undefined,
+    payload,
+    changes: list(source, ["changes", "operations", "actions"]).map(adaptOnboardingChange),
+    evidence: list(source, ["evidence", "evidenceItems", "evidence_items"]).map(adaptOnboardingEvidence),
+    ...(candidatePresent(source, ["harness", "harnessDescriptor", "harness_descriptor"]) ? { harness: adaptOnboardingHarness(source) } : {}),
+    createdAt: optionalText(source, ["createdAt", "created_at"]) || undefined,
+    updatedAt: optionalText(source, ["updatedAt", "updated_at"]) || undefined,
+    approvedAt: optionalText(source, ["approvedAt", "approved_at"]),
+    revokedAt: optionalText(source, ["revokedAt", "revoked_at"]),
+    appliedAt: optionalText(source, ["appliedAt", "applied_at"]),
+  };
+}
+
+export function adaptOnboardingSession(item: unknown): OnboardingSession {
+  const source = value(item, "session", value(item, "onboardingSession", value(item, "onboarding_session", value(item, "data", item))));
+  const proposalValue = value(source, "proposal", value(source, "onboardingProposal", value(source, "onboarding_proposal", value(source, "detectedSetup", value(source, "detected_setup", value(source, "setup", undefined))))));
+  const proposalList = list(source, ["proposals", "onboardingProposals", "onboarding_proposals"]);
+  const sessionId = text(source, ["id", "sessionId", "session_id"]);
+  return {
+    id: sessionId,
+    sessionId: sessionId || undefined,
+    projectId: text(source, ["projectId", "project_id"]),
+    status: text(source, ["status", "state"], "CREATED").toUpperCase(),
+    connectionId: optionalText(source, ["connectionId", "connection_id", "publicConnectionId", "public_connection_id", "connectId"]) || undefined,
+    revision: optionalNumber(source, ["revision", "version"]),
+    ...(candidatePresent(source, ["harness", "harnessDescriptor", "harness_descriptor"]) ? { harness: adaptOnboardingHarness(source) } : {}),
+    ...(proposalValue ? { proposal: adaptOnboardingProposal(proposalValue) } : {}),
+    ...(proposalList.length ? { proposals: proposalList.map(adaptOnboardingProposal) } : {}),
+    createdAt: optionalText(source, ["createdAt", "created_at"]) || undefined,
+    updatedAt: optionalText(source, ["updatedAt", "updated_at"]) || undefined,
+    expiresAt: optionalText(source, ["expiresAt", "expires_at"]),
+    approvedAt: optionalText(source, ["approvedAt", "approved_at"]),
+    revokedAt: optionalText(source, ["revokedAt", "revoked_at"]),
+    appliedAt: optionalText(source, ["appliedAt", "applied_at"]),
+    error: optionalText(source, ["error", "failureReason", "failure_reason"]),
+  };
+}
 
 export function adaptProject(item: unknown): AgentProject {
   const nodes = ((value(item, "nodes", []) || []) as unknown[]).map(adaptNode);

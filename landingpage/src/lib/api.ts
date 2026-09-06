@@ -1,5 +1,5 @@
-import { AgentProject, ApiCollection, BaselineRun, EvalCase, EvalRun, EvalRunCase, EvalSuite, EvalSuiteCreateInput, JsonObject, OptimizationCandidate, OptimizationRecommendation, OptimizationRun, OptimizerEvent, ProfileRun, ProjectLayout, ProjectSettings, ProjectSetupState, TraceDetail, TraceSpan, EntitlementState, ReferralSummary } from "../types";
-import { adaptBaselineRun, adaptEvalCase, adaptEvalRun, adaptEvalRunCase, adaptEvalSuite, adaptLayout, adaptOptimizationRun, adaptRecommendation, adaptProject, adaptCandidate, adaptOptimizerEvent, adaptOnboarding, adaptProfileRun, adaptSettings, adaptTraceDetail, adaptTraceSpan } from "./adapters";
+import { AgentProject, ApiCollection, BaselineRun, EvalCase, EvalRun, EvalRunCase, EvalSuite, EvalSuiteCreateInput, JsonObject, OptimizationCandidate, OptimizationRecommendation, OptimizationRun, OptimizerEvent, OnboardingSession, OnboardingSessionActionResult, OnboardingSessionApplyInput, OnboardingSessionApproveInput, OnboardingSessionCreateInput, OnboardingSessionRevokeInput, ProfileRun, ProjectLayout, ProjectSettings, ProjectSetupState, TraceDetail, TraceSpan, EntitlementState, ReferralSummary } from "../types";
+import { adaptBaselineRun, adaptEvalCase, adaptEvalRun, adaptEvalRunCase, adaptEvalSuite, adaptLayout, adaptOptimizationRun, adaptRecommendation, adaptProject, adaptCandidate, adaptOptimizerEvent, adaptOnboarding, adaptOnboardingSession, adaptProfileRun, adaptSettings, adaptTraceDetail, adaptTraceSpan } from "./adapters";
 
 const configuredBase = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
 const defaultApiBase = ["/api", "v1"].join("/");
@@ -158,6 +158,36 @@ export const api = {
   },
   async createProject(name: string, slug: string): Promise<AgentProject> { return adaptProject(await request("/projects", json({ name, slug }))); },
   async onboarding(projectId: string): Promise<ProjectSetupState> { return adaptOnboarding(await request(`/projects/${encodeURIComponent(projectId)}/onboarding`)); },
+  /** Start a harness-first, reviewable onboarding session for a project. */
+  async createOnboardingSession(projectId: string, input: OnboardingSessionCreateInput = {}): Promise<OnboardingSession> {
+    const { idempotencyKey, ...body } = input;
+    const options: RequestOptions = { ...json(body) };
+    if (idempotencyKey?.trim()) options.headers = { "Idempotency-Key": idempotencyKey.trim() };
+    return adaptOnboardingSession(await request(`/projects/${encodeURIComponent(projectId)}/onboarding/sessions`, options));
+  },
+  async getOnboardingSession(projectId: string, sessionId: string): Promise<OnboardingSession> {
+    return adaptOnboardingSession(await request(`/projects/${encodeURIComponent(projectId)}/onboarding/sessions/${encodeURIComponent(sessionId)}`));
+  },
+  async approveOnboardingSession(projectId: string, sessionId: string, input: OnboardingSessionApproveInput = {}): Promise<OnboardingSessionActionResult> {
+    const options = Object.keys(input).length ? json(input) : { method: "POST" };
+    return adaptOnboardingSession(await request(`/projects/${encodeURIComponent(projectId)}/onboarding/sessions/${encodeURIComponent(sessionId)}/approve`, options));
+  },
+  async revokeOnboardingSession(projectId: string, sessionId: string, input: OnboardingSessionRevokeInput = {}): Promise<OnboardingSessionActionResult> {
+    const options = Object.keys(input).length ? json(input) : { method: "POST" };
+    return adaptOnboardingSession(await request(`/projects/${encodeURIComponent(projectId)}/onboarding/sessions/${encodeURIComponent(sessionId)}/revoke`, options));
+  },
+  async applyOnboardingSession(projectId: string, sessionId: string, input: OnboardingSessionApplyInput | JsonObject = {}, operationId?: string): Promise<OnboardingSessionActionResult> {
+    // The harness UI passes the reviewed proposal and operation ID separately;
+    // callers using the typed input can pass the already-shaped body instead.
+    const body = operationId ? { proposal: input, operationId } : input;
+    return adaptOnboardingSession(await request(`/projects/${encodeURIComponent(projectId)}/onboarding/sessions/${encodeURIComponent(sessionId)}/apply`, json(body)));
+  },
+  // Short aliases are useful to callers that already namespace calls by the
+  // onboarding resource; the explicit methods above remain canonical.
+  async onboardingSession(projectId: string, sessionId: string): Promise<OnboardingSession> { return this.getOnboardingSession(projectId, sessionId); },
+  async approveOnboarding(projectId: string, sessionId: string, input: OnboardingSessionApproveInput = {}): Promise<OnboardingSessionActionResult> { return this.approveOnboardingSession(projectId, sessionId, input); },
+  async revokeOnboarding(projectId: string, sessionId: string, input: OnboardingSessionRevokeInput = {}): Promise<OnboardingSessionActionResult> { return this.revokeOnboardingSession(projectId, sessionId, input); },
+  async applyOnboarding(projectId: string, sessionId: string, input: OnboardingSessionApplyInput | JsonObject = {}, operationId?: string): Promise<OnboardingSessionActionResult> { return this.applyOnboardingSession(projectId, sessionId, input, operationId); },
   async createVersion(projectId: string, input: Record<string, unknown>): Promise<Record<string, unknown>> { return request(`/projects/${encodeURIComponent(projectId)}/versions`, json(input)); },
   async createProjectKey(projectId: string, name = "twinerun-local"): Promise<{ secret: string; name: string; id?: string }> { return request(`/projects/${encodeURIComponent(projectId)}/api-keys`, json({ name })); },
   async startProfile(projectId: string, input: JsonObject = {}): Promise<ProfileRun> { return adaptProfileRun(await request(`/profiles`, json({ ...input, project_id: projectId }))); },
