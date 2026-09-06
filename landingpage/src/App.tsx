@@ -17,7 +17,6 @@ import { SettingsView } from './components/SettingsView';
 import { DemoSession } from './auth/demoAuth';
 import { api, ApiError, DEMO_AUTH_ENABLED } from './lib/api';
 import { subscribeToOptimization, OptimizerStream } from './lib/sse';
-import { ProjectOnboarding } from './components/ProjectOnboarding';
 import { navigate, studioPath, studioViewFromPath } from './lib/router';
 
 const ACTIVE_PROJECT_STORAGE_KEY = 'twinerun.active-project';
@@ -74,11 +73,6 @@ export default function App({ session, onLogout, onOpenProfile }: AppProps) {
   const [error, setError] = useState('');
   const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [onboarding, setOnboarding] = useState<import('./types').ProjectSetupState | undefined>();
-  const [creatingProject, setCreatingProject] = useState(false);
-  const [showCreateProject, setShowCreateProject] = useState(false);
-  const [baselineStatus, setBaselineStatus] = useState<string | undefined>();
-  const [baselineRunId, setBaselineRunId] = useState<string | undefined>();
-  const [evalDatasetId, setEvalDatasetId] = useState<string | undefined>();
   const streamRef = useRef<OptimizerStream | null>(null);
   const startOptimizationRef = useRef<() => Promise<void>>(async () => undefined);
   const layoutRef = useRef(layout);
@@ -186,6 +180,19 @@ export default function App({ session, onLogout, onOpenProfile }: AppProps) {
   // project's graph or status.
   useEffect(() => closeOptimizerStream, [closeOptimizerStream, project?.id]);
 
+  // Onboarding is a route-level workspace flow, never a Studio panel. Keep
+  // this redirect backend-gated so a transient project-detail failure cannot
+  // fabricate an empty setup state.
+  useEffect(() => {
+    if (projectsLoaded && !project) {
+      navigate('/onboarding');
+      return;
+    }
+    if (project && onboarding && project.nodes.length === 0 && !onboarding.hasVersion) {
+      navigate(`/onboarding/${encodeURIComponent(project.id)}`);
+    }
+  }, [onboarding, project, projectsLoaded]);
+
   const handleViewChange = (view: ViewMode) => { navigate(studioPath(view)); setCurrentView(view); };
   const handleSelectProject = async (projectId: string) => {
     closeOptimizerStream();
@@ -195,63 +202,6 @@ export default function App({ session, onLogout, onOpenProfile }: AppProps) {
       setProject(next);
       setActiveRunId(window.sessionStorage.getItem(activeRunStorageKey(next.id)) || next.runId || '');
     } catch (cause) { setError(cause instanceof ApiError ? cause.message : 'Unable to load that project.'); }
-  };
-  const createProject = async (name: string, slug: string) => {
-    setCreatingProject(true); setError('');
-    try {
-      const created = await api.createProject(name, slug);
-      const next = await api.project(created.id).catch(() => created);
-      setProjects((current) => [...current.filter((item) => item.id !== next.id), next]);
-      setProject(next);
-      window.sessionStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, next.id);
-      window.sessionStorage.removeItem(activeRunStorageKey(next.id));
-      setActiveRunId(next.runId || '');
-      setShowCreateProject(false);
-      setOnboarding(await api.onboarding(next.id).catch(() => next.setup));
-    } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : 'Unable to create project.');
-      throw cause;
-    } finally { setCreatingProject(false); }
-  };
-  const createProjectKey = async () => project ? api.createProjectKey(project.id, 'twinerun-local') : null;
-  const refreshOnboarding = async (projectId: string) => {
-    const [detail, setup] = await Promise.all([api.project(projectId), api.onboarding(projectId)]);
-    setProject(detail); setOnboarding(setup); setBaselineStatus(setup.baselineStatus);
-    return setup;
-  };
-  const createVersion = async (input: Record<string, unknown>) => {
-    if (!project) return;
-    setError('');
-    try { await api.createVersion(project.id, input); await refreshOnboarding(project.id); }
-    catch (cause) { setError(cause instanceof ApiError ? cause.message : 'Unable to save the agent version.'); throw cause; }
-  };
-  const importEvaluations = async (name: string, cases: Record<string, unknown>[], graders: Record<string, unknown>[]) => {
-    if (!project) return;
-    setError('');
-    try {
-      const result = await api.importEval(project.id, name, cases, graders);
-      const datasetId = String(result.dataset_id || result.datasetId || '');
-      if (datasetId) setEvalDatasetId(datasetId);
-      await refreshOnboarding(project.id);
-    } catch (cause) { setError(cause instanceof ApiError ? cause.message : 'Unable to import evaluations.'); throw cause; }
-  };
-  const runBaseline = async () => {
-    if (!project || baselineStatus === 'QUEUED' || baselineStatus === 'RUNNING') return;
-    setError('');
-    try {
-      const result = await api.runBaseline(project.id, evalDatasetId);
-      setBaselineRunId(result.runId); setBaselineStatus(result.status || 'QUEUED');
-      setOnboarding((current) => current ? { ...current, baselineStatus: result.status || 'QUEUED', baselineRunId: result.runId, nextAction: 'RUN_BASELINE' } : current);
-      for (let attempt = 0; attempt < 30; attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 2000));
-        const statusPayload = await api.baseline(result.runId);
-        const status = String(statusPayload.status || 'RUNNING').toUpperCase();
-        setBaselineStatus(status);
-        if (status === 'COMPLETED' || status === 'FAILED' || status === 'CANCELLED') {
-          await refreshOnboarding(project.id); break;
-        }
-      }
-    } catch (cause) { setBaselineStatus('FAILED'); setError(cause instanceof ApiError ? cause.message : 'Unable to start the baseline.'); }
   };
   const handleSelectModelOverride = (nodeId: string, modelName: string) => setProject((prev) => prev ? ({ ...prev, nodes: prev.nodes.map((node) => node.id === nodeId ? { ...node, currentModel: modelName } : node) }) : prev);
 
@@ -343,19 +293,21 @@ export default function App({ session, onLogout, onOpenProfile }: AppProps) {
   }, []);
 
   if (!project) {
-    if (projectsLoaded) return <div className="studio-shell flex h-screen w-screen bg-[#050505] text-[#D6D9DC] overflow-hidden font-sans"><ProjectOnboarding busy={creatingProject} error={error} onCreateProject={createProject} onRefresh={() => void loadProjects()} /></div>;
+    if (projectsLoaded) return <div className="studio-shell flex h-screen items-center justify-center bg-[#050505] text-[#D6D9DC] font-mono text-xs"><div>Opening workspace setup…</div></div>;
     return <div className="studio-shell flex h-screen items-center justify-center bg-[#050505] text-[#D6D9DC] font-mono text-xs"><div className="space-y-3 text-center"><div>{error || "Loading persisted workspace…"}</div><button className="silver-btn-gradient rounded px-3 py-1 text-[#050505]" onClick={() => void loadProjects()}>Retry</button></div></div>;
   }
-  if (showCreateProject) return <div className="studio-shell flex h-screen w-screen bg-[#050505] text-[#D6D9DC] overflow-hidden font-sans"><ProjectOnboarding busy={creatingProject} error={error} onCreateProject={createProject} onRefresh={() => { setShowCreateProject(false); void loadProjects(); }} /></div>;
   // A persisted graph is enough to enter the Studio. The baseline/evaluation
   // gate controls optimization, not access to graph and profiling views.
   // This also avoids a first-render onboarding flash while setup is loading.
-  const hasStudioGraph = project.nodes.length > 0 && Boolean(project.version || onboarding?.hasVersion);
+  // A persisted version is the Studio entry contract. The API may return the
+  // graph nodes lazily, so do not trap a valid version in a setup spinner just
+  // because the first detail payload is lightweight.
+  const hasStudioGraph = Boolean(project.version || onboarding?.hasVersion);
   const projectReady = Boolean(onboarding?.hasVersion && onboarding?.baselineStatus === "COMPLETED");
-  if (!hasStudioGraph) return <div className="studio-shell flex h-screen w-screen bg-[#050505] text-[#D6D9DC] overflow-hidden font-sans"><ProjectOnboarding project={project} setup={onboarding || project.setup} error={error} onRefresh={() => { void loadProjects(); void api.onboarding(project.id).then(setOnboarding).catch(() => undefined); }} onCreateKey={createProjectKey} onCreateVersion={createVersion} onImportEvaluations={importEvaluations} onRunBaseline={runBaseline} baselineStatus={baselineStatus} baselineRunId={baselineRunId} /></div>;
+  if (!hasStudioGraph) return <div className="studio-shell flex h-screen items-center justify-center bg-[#050505] text-[#D6D9DC] font-mono text-xs"><div>Opening project setup…</div></div>;
   return <div className="studio-shell flex h-screen w-screen bg-[#050505] text-[#D6D9DC] overflow-hidden font-sans select-none relative">
     <NavigationRail session={activeSession} onLogout={onLogout || (() => {})} onOpenProfile={onOpenProfile || (() => {})} currentView={currentView} onViewChange={handleViewChange} onOpenIntegrations={() => setIsIntegrationsModalOpen(true)} onOpenSettings={() => { setIsSettingsModalOpen(false); handleViewChange('settings'); }} onOpenCommandPalette={() => setIsCommandPaletteOpen(true)} isOptimizing={isOptimizing} />
-    <div className="flex-1 flex flex-col h-full overflow-hidden"><TopBar project={project} allProjects={projects} onSelectProject={handleSelectProject} onCreateProject={() => setShowCreateProject(true)} currentView={currentView} onViewChange={handleViewChange} onRunOptimization={() => void startOptimization()} isOptimizing={isOptimizing} onOpenCommandPalette={() => setIsCommandPaletteOpen(true)} onOpenExport={() => setIsExportModalOpen(true)} optimizationProgressPct={progress} canOptimize={projectReady} />
+    <div className="flex-1 flex flex-col h-full overflow-hidden"><TopBar project={project} allProjects={projects} onSelectProject={handleSelectProject} onCreateProject={() => navigate('/onboarding?new=1')} currentView={currentView} onViewChange={handleViewChange} onRunOptimization={() => void startOptimization()} isOptimizing={isOptimizing} onOpenCommandPalette={() => setIsCommandPaletteOpen(true)} onOpenExport={() => setIsExportModalOpen(true)} optimizationProgressPct={progress} canOptimize={projectReady} />
       {error && <div className="px-4 py-1.5 bg-[#241b1b] border-b border-white/[0.08] text-[10px] font-mono" role="alert">{error}</div>}
       <main className="flex-1 flex overflow-hidden relative">
         {currentView === 'graph' && <><ExecutionGraph project={project} selectedNodeId={selectedNodeId} onSelectNode={setSelectedNodeId} isOptimizing={isOptimizing} onRunOptimization={() => void startOptimization()} activeTestingNodeId={activeTestingNodeId} testingStatus={testingStatus} layout={layout.nodes} layoutRevision={layout.revision} onLayoutChange={persistLayout} /><NodeInspector selectedNode={selectedNode} project={project} onClose={() => setSelectedNodeId(null)} onSelectModelOverride={handleSelectModelOverride} onRunOptimization={() => void startOptimization()} isOptimizing={isOptimizing} /></>}
@@ -367,7 +319,7 @@ export default function App({ session, onLogout, onOpenProfile }: AppProps) {
       </main>
     </div>
     <OptimizationModal isOpen={isOptModalOpen} isOptimizing={isOptimizing} events={optEvents} currentStepIndex={optEvents.length} totalSteps={Math.max(1, optEvents.length)} project={project} onClose={() => setIsOptModalOpen(false)} onApplyAndCompare={() => { setIsOptModalOpen(false); handleViewChange('diff'); }} onOpenFrontier={() => { setIsOptModalOpen(false); handleViewChange('frontier'); }} />
-    <CommandPalette isOpen={isCommandPaletteOpen} onClose={() => setIsCommandPaletteOpen(false)} onViewChange={handleViewChange} onRunOptimization={() => void startOptimization()} onSelectProject={handleSelectProject} onCreateProject={() => setShowCreateProject(true)} onOpenExport={() => setIsExportModalOpen(true)} onOpenIntegrations={() => setIsIntegrationsModalOpen(true)} allProjects={projects} />
+    <CommandPalette isOpen={isCommandPaletteOpen} onClose={() => setIsCommandPaletteOpen(false)} onViewChange={handleViewChange} onRunOptimization={() => void startOptimization()} onSelectProject={handleSelectProject} onCreateProject={() => navigate('/onboarding?new=1')} onOpenExport={() => setIsExportModalOpen(true)} onOpenIntegrations={() => setIsIntegrationsModalOpen(true)} allProjects={projects} />
     <ExportModal isOpen={isExportModalOpen} onClose={() => setIsExportModalOpen(false)} project={project} onExport={() => activeRunId ? api.exportRun(activeRunId) : Promise.resolve()} />
     <IntegrationsModal isOpen={isIntegrationsModalOpen} onClose={() => setIsIntegrationsModalOpen(false)} />
     <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} project={project} onUpdateProjectSettings={updateSettings} />

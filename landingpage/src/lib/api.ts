@@ -33,6 +33,7 @@ const unwrap = <T>(payload: unknown): T => {
 };
 
 const token = () => typeof window === "undefined" ? "" : window.sessionStorage.getItem("twinerun.access-token") || "";
+const isDemoToken = (accessToken: string) => accessToken.startsWith("agp_demo.");
 
 let demoTokenRequest: Promise<string | null> | null = null;
 
@@ -109,6 +110,15 @@ const collection = <T>(payload: ApiCollection<unknown> | unknown[], adapt: (item
 };
 
 export const api = {
+  /** Ensure a browser payment action has a backend-issued session token.
+   * The demo bootstrap is opt-in and never replaces a real production session.
+   */
+  async ensureAuthenticated(): Promise<boolean> {
+    const accessToken = await ensureDemoAccessToken();
+    // Backend-v1 deliberately requires a real user session for customer
+    // billing; demo tokens are tenant-read credentials only.
+    return Boolean(accessToken && !isDemoToken(accessToken));
+  },
   async demoSignIn(): Promise<{ accessToken: string; tokenType: string; expiresIn: number }> {
     const auth = await request<{ accessToken: string; tokenType: string; expiresIn: number }>("/auth/demo", { ...json({}), skipAuth: true });
     if (auth.accessToken) storeToken(auth.accessToken);
@@ -118,17 +128,23 @@ export const api = {
   async systemOverview(): Promise<Record<string, unknown>> { return request<Record<string, unknown>>("/system/overview"); },
   async signIn(email: string, password: string): Promise<Record<string, unknown>> {
     const auth = await request<Record<string, unknown>>("/auth/signin", json({ email, password }));
-    if (typeof auth.accessToken === "string") storeToken(auth.accessToken);
+    if (typeof auth.accessToken !== "string" || !auth.accessToken.trim()) throw new ApiError(502, "Authentication service did not return a session.", "AUTH_MISSING_TOKEN");
+    storeToken(auth.accessToken);
     return auth;
   },
   async signUp(name: string, email: string, password: string, referralCode?: string): Promise<Record<string, unknown>> {
     const auth = await request<Record<string, unknown>>("/auth/signup", json({ name, email, password, ...(referralCode ? { referralCode } : {}) }));
-    if (typeof auth.accessToken === "string") storeToken(auth.accessToken);
+    if (typeof auth.accessToken !== "string" || !auth.accessToken.trim()) throw new ApiError(502, "Authentication service did not return a session.", "AUTH_MISSING_TOKEN");
+    storeToken(auth.accessToken);
     return auth;
   },
   async logout(): Promise<void> { await request("/auth/logout", { method: "POST" }); },
   async checkout(plan: "pro", referralCode?: string, idempotencyKey?: string): Promise<{ checkoutUrl: string; checkoutSessionId: string }> {
-    const payload = await request<Record<string, unknown>>("/billing/checkout", json({ plan, ...(referralCode ? { referralCode } : {}), idempotencyKey: idempotencyKey || crypto.randomUUID() }));
+    const key = idempotencyKey || crypto.randomUUID();
+    const payload = await request<Record<string, unknown>>("/billing/checkout", {
+      ...json({ plan, ...(referralCode ? { referralCode } : {}) }),
+      headers: { "Idempotency-Key": key },
+    });
     return { checkoutUrl: String(payload.checkoutUrl || payload.checkout_url || ""), checkoutSessionId: String(payload.checkoutSessionId || payload.checkout_session_id || payload.id || "") };
   },
   async entitlements(): Promise<EntitlementState> { return request<EntitlementState>("/entitlements"); },

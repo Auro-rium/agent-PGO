@@ -8,6 +8,7 @@ export type BrowserRoute =
   | { kind: "auth"; mode: "signin" | "signup"; returnTo?: string; referralCode?: string }
   | { kind: "profile" }
   | { kind: "system" }
+  | { kind: "onboarding"; projectId?: string; create?: boolean }
   | { kind: "studio"; view: ViewMode }
   | { kind: "not-found"; path: string };
 
@@ -43,7 +44,7 @@ const legacyHashPath = (hash: string): string | null => {
   let normalized: string;
   if (value === "studio") normalized = "/studio";
   else if (value.startsWith("studio/")) normalized = `/studio/${value.slice("studio/".length)}`;
-  else if (sections.has(value as VesperRoute) || value === "signin" || value === "signup" || value === "profile") normalized = `/${value}`;
+  else if (sections.has(value as VesperRoute) || value === "signin" || value === "signup" || value === "profile" || value === "onboarding" || value.startsWith("onboarding/")) normalized = `/${value}`;
   else return null;
   return rawSearch ? `${normalized}?${rawSearch}` : normalized;
 };
@@ -76,6 +77,14 @@ export const parsePath = (pathname: string, search = ""): BrowserRoute => {
   }
   if (path === "/profile") return { kind: "profile" };
   if (path === "/system") return { kind: "system" };
+  if (path === "/onboarding") {
+    const params = new URLSearchParams(search);
+    return { kind: "onboarding", projectId: params.get("project") || undefined, create: params.get("new") === "1" };
+  }
+  if (path.startsWith("/onboarding/") && path.length > "/onboarding/".length) {
+    const projectId = decodeURIComponent(path.slice("/onboarding/".length));
+    return projectId ? { kind: "onboarding", projectId } : { kind: "onboarding" };
+  }
   if (path === "/studio" || path === "/studio/graph") return { kind: "studio", view: "graph" };
   if (path.startsWith("/studio/")) {
     const view = path.slice("/studio/".length) as ViewMode;
@@ -136,6 +145,10 @@ export const routePath = (route: BrowserRoute): string => {
     }
     case "profile": return "/profile";
     case "system": return "/system";
+    case "onboarding": {
+      const base = route.projectId ? `/onboarding/${encodeURIComponent(route.projectId)}` : "/onboarding";
+      return route.create && !route.projectId ? `${base}?new=1` : base;
+    }
     case "studio": return studioPath(route.view);
     case "not-found": return route.path;
   }

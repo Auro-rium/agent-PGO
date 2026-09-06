@@ -6,11 +6,13 @@ import { VesperHomeFinal } from './components/VesperHomeFinal';
 import { VesperSectionPage } from './components/VesperSectionPage';
 import { navigate, routePath, safeReturnPath, useBrowserRoute } from './lib/router';
 import { SystemOverview } from './components/SystemOverview';
-import { api } from './lib/api';
+import { StandaloneOnboardingPage } from './components/StandaloneOnboardingPage';
+import { api, ApiError } from './lib/api';
 import './vesper.css';
 import './vesper-fix.css';
 import './vesper-sections.css';
 import './vesper-routes.css';
+import './onboarding-standalone.css';
 
 const NotFoundPage: React.FC<{ path: string; onHome: () => void }> = ({ path, onHome }) => (
   <main className="vesper-page flex min-h-screen items-center justify-center bg-[#050505] px-6 text-[#F2F3F4]">
@@ -39,14 +41,14 @@ export default function LandingGateV5() {
   }, []);
 
   useEffect(() => {
-    if ((route.kind === 'studio' || route.kind === 'profile' || route.kind === 'system') && !session) {
+    if ((route.kind === 'studio' || route.kind === 'profile' || route.kind === 'system' || route.kind === 'onboarding') && !session) {
       navigate(`/signin?returnTo=${encodeURIComponent(routePath(route))}`, true);
     }
   }, [route, session]);
 
   const startCheckout = useCallback(async (referralCode?: string) => {
-    if (!session) {
-      const returnTo = `/pricing?checkout=pro${referralCode ? `&ref=${encodeURIComponent(referralCode)}` : ""}`;
+    const returnTo = `/pricing?checkout=pro${referralCode ? `&ref=${encodeURIComponent(referralCode)}` : ""}`;
+    if (!session || !(await api.ensureAuthenticated())) {
       navigate(`/signin?returnTo=${encodeURIComponent(returnTo)}`);
       return;
     }
@@ -65,6 +67,15 @@ export default function LandingGateV5() {
       window.sessionStorage.setItem("twinerun.checkout.pending", JSON.stringify({ checkoutSessionId: result.checkoutSessionId, idempotencyKey, startedAt: new Date().toISOString() }));
       window.location.assign(result.checkoutUrl);
     } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 401) {
+        // The local UI session can outlive a revoked/expired backend session.
+        // Payment must never proceed on that stale marker.
+        clearDemoSession();
+        window.sessionStorage.removeItem('twinerun.access-token');
+        setSession(null);
+        navigate(`/signin?returnTo=${encodeURIComponent(returnTo)}`);
+        return;
+      }
       setCheckoutState("error");
       setCheckoutError(cause instanceof Error ? cause.message : "Checkout could not be started.");
     }
@@ -72,6 +83,11 @@ export default function LandingGateV5() {
   const launchStudio = () => navigate(session ? '/studio' : '/signin?returnTo=%2Fstudio');
   useEffect(() => {
     if (route.kind !== "section" || route.section !== "pricing" || route.checkout !== "pro" || !session) return;
+    // A hosted checkout returns to the profile page once the provider has
+    // accepted the session. If a provider cancel/error flow lands back on the
+    // pricing route, keep the existing idempotent attempt visible and require
+    // an explicit retry instead of recursively opening another checkout.
+    if (window.sessionStorage.getItem("twinerun.checkout.pending")) return;
     const attemptKey = `${session.email}:${routePath(route)}`;
     if (checkoutAttempt.current === attemptKey) return;
     checkoutAttempt.current = attemptKey;
@@ -93,6 +109,7 @@ export default function LandingGateV5() {
   if (route.kind === 'auth') return <AuthPage mode={route.mode} onAuthenticated={handleAuthenticated} />;
   if (route.kind === 'profile') return session ? <ProfilePage session={session} onLogout={logout} onOpenStudio={() => navigate('/studio')} /> : null;
   if (route.kind === 'system') return session ? <SystemOverview /> : null;
+  if (route.kind === 'onboarding') return session ? <StandaloneOnboardingPage projectId={route.projectId} create={route.create} onOpenStudio={(projectId) => { window.sessionStorage.setItem('twinerun.active-project', projectId); navigate('/studio'); }} /> : null;
   if (route.kind === 'studio') return session ? <App session={session} onLogout={logout} onOpenProfile={() => navigate('/profile')} /> : null;
   if (route.kind === 'not-found') return <NotFoundPage path={route.path} onHome={() => navigate('/')} />;
   if (route.kind === 'home') return <VesperHomeFinal onLaunchStudio={launchStudio} />;
