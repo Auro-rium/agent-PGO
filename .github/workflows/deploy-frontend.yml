@@ -7,6 +7,12 @@ on:
       - "landingpage/**"
       - ".github/workflows/deploy-frontend.yml"
   workflow_dispatch:
+    inputs:
+      operation:
+        description: Deploy frontend or run read-only backend diagnostics
+        type: choice
+        options: [deploy-frontend, backend-diagnostics]
+        default: deploy-frontend
 
 permissions:
   contents: read
@@ -18,7 +24,23 @@ env:
   FUNCTION_URL: https://2syexxoronpapxxxhzu6grgi4a0limkr.lambda-url.us-east-1.on.aws/
 
 jobs:
+  backend-diagnostics:
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'backend-diagnostics'
+    name: Read-only AWS backend diagnostics
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use existing AWS role (no IAM changes)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_FRONTEND_DEPLOY_ROLE_ARN }}
+          role-session-name: twinerun-readonly-${{ github.run_id }}
+      - name: Diagnose existing backend without printing secrets or raw logs
+        run: python .github/scripts/aws_readonly_diagnostics.py
   deploy:
+    if: github.event_name != 'workflow_dispatch' || inputs.operation != 'backend-diagnostics'
     name: Build, deploy, and smoke test
     runs-on: ubuntu-latest
     defaults:
