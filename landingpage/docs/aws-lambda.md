@@ -7,8 +7,20 @@ function serves `dist/` from its deployment package and falls back to
 
 The adapter serves existing assets directly and returns `index.html` for an
 unknown browser path (for example, `/studio`), allowing the SPA to boot on a
-direct navigation or refresh. Hash fragments such as `#studio` are handled in
-the browser and are never sent to Lambda.
+direct navigation or refresh. Missing static files (including `/assets/*`) are
+returned as `404` instead of silently receiving the app shell, so browser
+asset failures remain observable. Hash fragments such as `#studio` are handled
+in the browser and are never sent to Lambda.
+
+Each CI package includes its public Git commit SHA as `build-sha`. The handler
+returns it in the `x-twinerun-build-sha` response header; deployment smoke tests
+compare that header and the downloaded JavaScript bytes with the exact build
+artifact. This proves that the Function URL is serving the commit that was
+built without putting any credentials in the bundle or response.
+
+Content-addressed files under `assets/` are cached immutably. Stable public
+files such as `twinerun-logo.png` are revalidated so branding updates are not
+held behind a year-long browser cache.
 
 ## Deploy
 
@@ -47,4 +59,3 @@ curl -fsS "https://YOUR_FUNCTION_URL/studio" | grep -F '<title>TwineRun — Oper
 
 `#studio` is a browser fragment and is not sent to Lambda; opening that URL in a
 browser loads the existing twinerun optimizer workspace through the same app.
-

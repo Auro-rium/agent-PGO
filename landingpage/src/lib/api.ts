@@ -1,5 +1,5 @@
-import { AgentProject, ApiCollection, BaselineRun, EvalCase, EvalRun, EvalRunCase, EvalSuite, EvalSuiteCreateInput, JsonObject, OptimizationCandidate, OptimizationRecommendation, OptimizationRun, OptimizerEvent, ProfileRun, ProjectLayout, ProjectSettings, ProjectSetupState, TraceDetail, TraceSpan, EntitlementState, ReferralSummary } from "../types";
-import { adaptBaselineRun, adaptEvalCase, adaptEvalRun, adaptEvalRunCase, adaptEvalSuite, adaptLayout, adaptOptimizationRun, adaptRecommendation, adaptProject, adaptCandidate, adaptOptimizerEvent, adaptOnboarding, adaptProfileRun, adaptSettings, adaptTraceDetail, adaptTraceSpan } from "./adapters";
+import { AgentProject, ApiCollection, BaselineRun, EvalCase, EvalRun, EvalRunCase, EvalSuite, EvalSuiteCreateInput, JsonObject, OptimizationCandidate, OptimizationRecommendation, OptimizationRun, OptimizerEvent, OnboardingSession, OnboardingSessionActionResult, OnboardingSessionApplyInput, OnboardingSessionApproveInput, OnboardingSessionCreateInput, OnboardingSessionRevokeInput, ProfileRun, ProjectLayout, ProjectSettings, ProjectSetupState, TraceDetail, TraceSpan, EntitlementState, ReferralSummary } from "../types";
+import { adaptBaselineRun, adaptEvalCase, adaptEvalRun, adaptEvalRunCase, adaptEvalSuite, adaptLayout, adaptOptimizationRun, adaptRecommendation, adaptProject, adaptCandidate, adaptOptimizerEvent, adaptOnboarding, adaptOnboardingSession, adaptProfileRun, adaptSettings, adaptTraceDetail, adaptTraceSpan } from "./adapters";
 
 const configuredBase = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
 const defaultApiBase = ["/api", "v1"].join("/");
@@ -33,6 +33,7 @@ const unwrap = <T>(payload: unknown): T => {
 };
 
 const token = () => typeof window === "undefined" ? "" : window.sessionStorage.getItem("twinerun.access-token") || "";
+const isDemoToken = (accessToken: string) => accessToken.startsWith("agp_demo.");
 
 let demoTokenRequest: Promise<string | null> | null = null;
 
@@ -109,6 +110,15 @@ const collection = <T>(payload: ApiCollection<unknown> | unknown[], adapt: (item
 };
 
 export const api = {
+  /** Ensure a browser payment action has a backend-issued session token.
+   * The demo bootstrap is opt-in and never replaces a real production session.
+   */
+  async ensureAuthenticated(): Promise<boolean> {
+    const accessToken = await ensureDemoAccessToken();
+    // Backend-v1 deliberately requires a real user session for customer
+    // billing; demo tokens are tenant-read credentials only.
+    return Boolean(accessToken && !isDemoToken(accessToken));
+  },
   async demoSignIn(): Promise<{ accessToken: string; tokenType: string; expiresIn: number }> {
     const auth = await request<{ accessToken: string; tokenType: string; expiresIn: number }>("/auth/demo", { ...json({}), skipAuth: true });
     if (auth.accessToken) storeToken(auth.accessToken);
@@ -118,17 +128,23 @@ export const api = {
   async systemOverview(): Promise<Record<string, unknown>> { return request<Record<string, unknown>>("/system/overview"); },
   async signIn(email: string, password: string): Promise<Record<string, unknown>> {
     const auth = await request<Record<string, unknown>>("/auth/signin", json({ email, password }));
-    if (typeof auth.accessToken === "string") storeToken(auth.accessToken);
+    if (typeof auth.accessToken !== "string" || !auth.accessToken.trim()) throw new ApiError(502, "Authentication service did not return a session.", "AUTH_MISSING_TOKEN");
+    storeToken(auth.accessToken);
     return auth;
   },
   async signUp(name: string, email: string, password: string, referralCode?: string): Promise<Record<string, unknown>> {
     const auth = await request<Record<string, unknown>>("/auth/signup", json({ name, email, password, ...(referralCode ? { referralCode } : {}) }));
-    if (typeof auth.accessToken === "string") storeToken(auth.accessToken);
+    if (typeof auth.accessToken !== "string" || !auth.accessToken.trim()) throw new ApiError(502, "Authentication service did not return a session.", "AUTH_MISSING_TOKEN");
+    storeToken(auth.accessToken);
     return auth;
   },
   async logout(): Promise<void> { await request("/auth/logout", { method: "POST" }); },
   async checkout(plan: "pro", referralCode?: string, idempotencyKey?: string): Promise<{ checkoutUrl: string; checkoutSessionId: string }> {
-    const payload = await request<Record<string, unknown>>("/billing/checkout", json({ plan, ...(referralCode ? { referralCode } : {}), idempotencyKey: idempotencyKey || crypto.randomUUID() }));
+    const key = idempotencyKey || crypto.randomUUID();
+    const payload = await request<Record<string, unknown>>("/billing/checkout", {
+      ...json({ plan, ...(referralCode ? { referralCode } : {}) }),
+      headers: { "Idempotency-Key": key },
+    });
     return { checkoutUrl: String(payload.checkoutUrl || payload.checkout_url || ""), checkoutSessionId: String(payload.checkoutSessionId || payload.checkout_session_id || payload.id || "") };
   },
   async entitlements(): Promise<EntitlementState> { return request<EntitlementState>("/entitlements"); },
@@ -142,6 +158,36 @@ export const api = {
   },
   async createProject(name: string, slug: string): Promise<AgentProject> { return adaptProject(await request("/projects", json({ name, slug }))); },
   async onboarding(projectId: string): Promise<ProjectSetupState> { return adaptOnboarding(await request(`/projects/${encodeURIComponent(projectId)}/onboarding`)); },
+  /** Start a harness-first, reviewable onboarding session for a project. */
+  async createOnboardingSession(projectId: string, input: OnboardingSessionCreateInput = {}): Promise<OnboardingSession> {
+    const { idempotencyKey, ...body } = input;
+    const options: RequestOptions = { ...json(body) };
+    if (idempotencyKey?.trim()) options.headers = { "Idempotency-Key": idempotencyKey.trim() };
+    return adaptOnboardingSession(await request(`/projects/${encodeURIComponent(projectId)}/onboarding/sessions`, options));
+  },
+  async getOnboardingSession(projectId: string, sessionId: string): Promise<OnboardingSession> {
+    return adaptOnboardingSession(await request(`/projects/${encodeURIComponent(projectId)}/onboarding/sessions/${encodeURIComponent(sessionId)}`));
+  },
+  async approveOnboardingSession(projectId: string, sessionId: string, input: OnboardingSessionApproveInput = {}): Promise<OnboardingSessionActionResult> {
+    const options = Object.keys(input).length ? json(input) : { method: "POST" };
+    return adaptOnboardingSession(await request(`/projects/${encodeURIComponent(projectId)}/onboarding/sessions/${encodeURIComponent(sessionId)}/approve`, options));
+  },
+  async revokeOnboardingSession(projectId: string, sessionId: string, input: OnboardingSessionRevokeInput = {}): Promise<OnboardingSessionActionResult> {
+    const options = Object.keys(input).length ? json(input) : { method: "POST" };
+    return adaptOnboardingSession(await request(`/projects/${encodeURIComponent(projectId)}/onboarding/sessions/${encodeURIComponent(sessionId)}/revoke`, options));
+  },
+  async applyOnboardingSession(projectId: string, sessionId: string, input: OnboardingSessionApplyInput | JsonObject = {}, operationId?: string): Promise<OnboardingSessionActionResult> {
+    // The harness UI passes the reviewed proposal and operation ID separately;
+    // callers using the typed input can pass the already-shaped body instead.
+    const body = operationId ? { proposal: input, operationId } : input;
+    return adaptOnboardingSession(await request(`/projects/${encodeURIComponent(projectId)}/onboarding/sessions/${encodeURIComponent(sessionId)}/apply`, json(body)));
+  },
+  // Short aliases are useful to callers that already namespace calls by the
+  // onboarding resource; the explicit methods above remain canonical.
+  async onboardingSession(projectId: string, sessionId: string): Promise<OnboardingSession> { return this.getOnboardingSession(projectId, sessionId); },
+  async approveOnboarding(projectId: string, sessionId: string, input: OnboardingSessionApproveInput = {}): Promise<OnboardingSessionActionResult> { return this.approveOnboardingSession(projectId, sessionId, input); },
+  async revokeOnboarding(projectId: string, sessionId: string, input: OnboardingSessionRevokeInput = {}): Promise<OnboardingSessionActionResult> { return this.revokeOnboardingSession(projectId, sessionId, input); },
+  async applyOnboarding(projectId: string, sessionId: string, input: OnboardingSessionApplyInput | JsonObject = {}, operationId?: string): Promise<OnboardingSessionActionResult> { return this.applyOnboardingSession(projectId, sessionId, input, operationId); },
   async createVersion(projectId: string, input: Record<string, unknown>): Promise<Record<string, unknown>> { return request(`/projects/${encodeURIComponent(projectId)}/versions`, json(input)); },
   async createProjectKey(projectId: string, name = "twinerun-local"): Promise<{ secret: string; name: string; id?: string }> { return request(`/projects/${encodeURIComponent(projectId)}/api-keys`, json({ name })); },
   async startProfile(projectId: string, input: JsonObject = {}): Promise<ProfileRun> { return adaptProfileRun(await request(`/profiles`, json({ ...input, project_id: projectId }))); },

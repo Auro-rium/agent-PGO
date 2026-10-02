@@ -91,7 +91,13 @@
   .vesper-stats { flex-direction: column; justify-content: center; gap: 16px; padding: 0 20px max(28px, env(safe-area-inset-bottom)); font-size: 15px; }
   .vesper-stat { white-space: normal; text-align: center; }
 }
-@media (prefers-reduced-motion: reduce) { .vesper-page *, .vesper-page *::before, .vesper-page *::after { animation: none !important; transition: none !important; } }
+@media (prefers-reduced-motion: reduce) {
+  .vesper-page *, .vesper-page *::before, .vesper-page *::after { animation: none !important; transition: none !important; }
+  /* Keep normal-mode atmosphere, but do not autoplay the home video for users
+     who explicitly request reduced motion. The existing radial background
+     remains visible underneath. */
+  .vesper-home-page .vesper-photo video { display: none; }
+}
 
 
 /* Repository wordmark: the transparent crop keeps the supplied TwineRun mark crisp. */

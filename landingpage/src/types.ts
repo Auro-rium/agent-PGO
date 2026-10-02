@@ -4,6 +4,7 @@ export type ProjectNextAction = 'DEFINE_AGENT' | 'CREATE_VERSION' | 'ADD_TRACES'
 
 export interface ProjectSetupState {
   projectCreated: boolean;
+  stage?: string;
   hasVersion: boolean;
   hasTraces: boolean;
   hasEvaluationSuite: boolean;
@@ -13,7 +14,155 @@ export interface ProjectSetupState {
   versionId?: string;
   traceCount?: number;
   evalCaseCount?: number;
+  completed?: { project?: boolean; agentVersion?: boolean; traces?: boolean; evaluations?: boolean; baseline?: boolean; [key: string]: boolean | undefined };
+  counts?: { versions?: number; traces?: number; evalSuites?: number; baselineRuns?: number; [key: string]: number | undefined };
 }
+
+/**
+ * Durable, review-first onboarding state.  The session deliberately carries
+ * only descriptions and evidence; connector credentials and one-time API key
+ * material are never part of this persisted client model.
+ */
+export type OnboardingSessionStatus =
+  | 'CREATED'
+  | 'PROPOSING'
+  | 'PROPOSED'
+  | 'APPROVED'
+  | 'REVOKED'
+  | 'APPLYING'
+  | 'APPLIED'
+  | 'FAILED'
+  | 'EXPIRED'
+  | string;
+
+export type OnboardingProposalStatus =
+  | 'PENDING'
+  | 'APPROVED'
+  | 'REVOKED'
+  | 'APPLIED'
+  | 'REJECTED'
+  | 'EXPIRED'
+  | string;
+
+export interface OnboardingHarnessDescriptor {
+  id?: string;
+  name?: string;
+  kind?: string;
+  framework?: string;
+  runtime?: string;
+  version?: string;
+  entrypoint?: string;
+  detected?: boolean;
+  capabilities?: string[];
+  metadata?: JsonObject;
+}
+
+export interface OnboardingEvidence {
+  id?: string;
+  kind: string;
+  status?: string;
+  summary?: string;
+  count?: number;
+  observedAt?: string | null;
+  metadata?: JsonObject;
+}
+
+export interface OnboardingChange {
+  kind: string;
+  path?: string;
+  label?: string;
+  before?: JsonValue;
+  after?: JsonValue;
+  rationale?: string;
+}
+
+export interface OnboardingProposal {
+  id: string;
+  /** Backends may expose the resource key under either spelling. */
+  proposalId?: string;
+  sessionId?: string;
+  projectId?: string;
+  status: OnboardingProposalStatus;
+  revision?: number;
+  title?: string;
+  summary?: string;
+  rationale?: string;
+  /** Sanitized proposal payload retained for an exact review/apply round trip. */
+  payload?: JsonObject;
+  changes: OnboardingChange[];
+  evidence: OnboardingEvidence[];
+  harness?: OnboardingHarnessDescriptor;
+  createdAt?: string;
+  updatedAt?: string;
+  approvedAt?: string | null;
+  revokedAt?: string | null;
+  appliedAt?: string | null;
+}
+
+export interface OnboardingSession {
+  id: string;
+  /** Backends may expose the resource key under either spelling. */
+  sessionId?: string;
+  projectId: string;
+  status: OnboardingSessionStatus;
+  /** Non-secret handle used by the harness connection instructions. */
+  connectionId?: string;
+  revision?: number;
+  harness?: OnboardingHarnessDescriptor;
+  proposal?: OnboardingProposal | null;
+  proposals?: OnboardingProposal[];
+  createdAt?: string;
+  updatedAt?: string;
+  expiresAt?: string | null;
+  approvedAt?: string | null;
+  revokedAt?: string | null;
+  appliedAt?: string | null;
+  error?: string | null;
+}
+
+/** Inputs contain references and non-sensitive harness metadata only. */
+export interface OnboardingSessionCreateInput {
+  harness?: OnboardingHarnessDescriptor;
+  source?: string;
+  description?: string;
+  metadata?: JsonObject;
+  expiresAt?: string;
+  idempotencyKey?: string;
+}
+
+export interface OnboardingSessionApproveInput {
+  proposalId?: string;
+  revision?: number;
+  note?: string;
+}
+
+export interface OnboardingSessionRevokeInput {
+  revision?: number;
+  reason?: string;
+}
+
+export interface OnboardingSessionApplyInput {
+  proposal?: OnboardingProposal | JsonObject;
+  operationId?: string;
+  proposalId?: string;
+  revision?: number;
+  /** A preview may be requested without mutating the project. */
+  dryRun?: boolean;
+}
+
+/** Action responses are sessions so callers always receive refreshed state. */
+export type OnboardingSessionActionResult = OnboardingSession;
+export type OnboardingApplyResult = OnboardingSessionActionResult;
+export type OnboardingSessionCreateRequest = OnboardingSessionCreateInput;
+export type OnboardingSessionApproveRequest = OnboardingSessionApproveInput;
+export type OnboardingSessionRevokeRequest = OnboardingSessionRevokeInput;
+export type OnboardingSessionApplyRequest = OnboardingSessionApplyInput;
+
+// Naming aliases keep the contract usable by the harness terminology without
+// forcing existing callers to migrate from the shorter onboarding names.
+export type HarnessOnboardingSession = OnboardingSession;
+export type HarnessOnboardingProposal = OnboardingProposal;
+export type HarnessOnboardingSessionCreateInput = OnboardingSessionCreateInput;
 
 export interface EntitlementState {
   plan: string;
